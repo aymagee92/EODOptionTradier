@@ -96,7 +96,7 @@ sudo systemctl reload postgresql
 # ENVIRONMENT VARIABLES
 # ───────────────────────────────────────────────
 export PG_DSN="postgresql+psycopg2://options_ingest@localhost:5432/options_eod"
-export TRADIER_ACCESS_TOKEN="YOUR_TRADIER_TOKEN_HERE"
+export TRADIER_ACCESS_TOKEN="OUOFRjuCoP5C3uSBni56tOdaUhOG"
 
 # ───────────────────────────────────────────────
 # CLONE (FRESH)
