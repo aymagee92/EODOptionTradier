@@ -1,6 +1,8 @@
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, Response
 from sqlalchemy import create_engine, text
 import os
+import csv
+import io
 
 app = Flask(__name__)
 engine = create_engine(os.environ["PG_DSN"])
@@ -49,8 +51,10 @@ TEMPLATE = """
 
 <br>
 Rows:
-<input type="number" name="limit" value="{{ limit }}" min="1" max="5000">
-<button type="submit">Run</button>
+<input type="number" name="limit" value="{{ limit }}" min="1" max="50000">
+
+<button type="submit" name="format" value="html">Run</button>
+<button type="submit" name="format" value="csv">Download CSV</button>
 </form>
 
 <hr>
@@ -114,7 +118,25 @@ def index():
     """
 
     with engine.connect() as conn:
-        rows = [dict(r) for r in conn.execute(text(sql), params)]
+        result = conn.execute(text(sql), params)
+        rows = [dict(r._mapping) for r in result]
+
+    # ─────────────────────────────
+    # CSV DOWNLOAD
+    # ─────────────────────────────
+    if request.args.get("format") == "csv":
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+
+        return Response(
+            output.getvalue(),
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": "attachment; filename=options_export.csv"
+            },
+        )
 
     return render_template_string(
         TEMPLATE,
