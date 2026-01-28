@@ -1,0 +1,132 @@
+# =========================================================
+# FULL SETUP FROM SCRATCH – COPY / PASTE ALL
+# =========================================================
+
+# ───────────────────────────────────────────────
+# SYSTEM UPDATE
+# ───────────────────────────────────────────────
+sudo apt update && sudo apt upgrade -y
+
+# ───────────────────────────────────────────────
+# TIME ZONE (EASTERN)
+# ───────────────────────────────────────────────
+sudo timedatectl set-timezone America/New_York
+
+# ───────────────────────────────────────────────
+# PYTHON + ESSENTIALS + POSTGRES
+# ───────────────────────────────────────────────
+sudo apt install -y python3 python3-pip python3-venv build-essential git postgresql postgresql-contrib
+
+# ───────────────────────────────────────────────
+# PROJECT DIRECTORY + VIRTUAL ENV
+# ───────────────────────────────────────────────
+cd ~
+mkdir -p options_eod_backend
+cd options_eod_backend
+python3 -m venv .venv
+source .venv/bin/activate
+
+# ───────────────────────────────────────────────
+# PYTHON LIBRARIES
+# ───────────────────────────────────────────────
+pip install --upgrade pip wheel
+pip install requests pandas sqlalchemy psycopg2-binary flask
+
+# ───────────────────────────────────────────────
+# CONFIRM VOLUME MOUNT
+# ───────────────────────────────────────────────
+lsblk
+df -h | grep -E "/mnt/volume-nyc3-01|Filesystem" || true
+
+# ───────────────────────────────────────────────
+# MOVE POSTGRES DATA TO VOLUME
+# ───────────────────────────────────────────────
+VOL_MNT="/mnt/volume-nyc3-01"
+sudo systemctl stop postgresql || true
+
+PG_VER="$(ls /etc/postgresql | head -n 1)"
+
+sudo mkdir -p "${VOL_MNT}/postgresql/${PG_VER}/main"
+sudo rsync -a /var/lib/postgresql/${PG_VER}/main/ "${VOL_MNT}/postgresql/${PG_VER}/main/"
+sudo chown -R postgres:postgres "${VOL_MNT}/postgresql"
+
+sudo sed -i "s|^data_directory =.*|data_directory = '${VOL_MNT}/postgresql/${PG_VER}/main'|" \
+  /etc/postgresql/${PG_VER}/main/postgresql.conf
+
+sudo sed -i "s|^#\?listen_addresses =.*|listen_addresses = 'localhost'|" \
+  /etc/postgresql/${PG_VER}/main/postgresql.conf
+
+sudo systemctl start postgresql
+
+# ───────────────────────────────────────────────
+# CREATE DATABASE + USER (NO PASSWORD)
+# ───────────────────────────────────────────────
+DB_NAME="options_eod"
+DB_USER="options_ingest"
+
+sudo -u postgres psql <<SQL
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='${DB_USER}') THEN
+    CREATE ROLE ${DB_USER} LOGIN;
+  END IF;
+END
+\$\$;
+
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname='${DB_NAME}') THEN
+    CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};
+  END IF;
+END
+\$\$;
+SQL
+
+# ───────────────────────────────────────────────
+# ALLOW PASSWORDLESS LOCAL ACCESS
+# ───────────────────────────────────────────────
+PG_HBA="/etc/postgresql/${PG_VER}/main/pg_hba.conf"
+sudo sed -i "1ilocal ${DB_NAME} ${DB_USER} trust" "${PG_HBA}"
+sudo sed -i "2ihost ${DB_NAME} ${DB_USER} 127.0.0.1/32 trust" "${PG_HBA}"
+sudo sed -i "3ihost ${DB_NAME} ${DB_USER} ::1/128 trust" "${PG_HBA}"
+sudo systemctl reload postgresql
+
+# ───────────────────────────────────────────────
+# ENVIRONMENT VARIABLES
+# ───────────────────────────────────────────────
+export PG_DSN="postgresql+psycopg2://options_ingest@localhost:5432/options_eod"
+export TRADIER_ACCESS_TOKEN="YOUR_TRADIER_TOKEN_HERE"
+
+grep -q '^export PG_DSN=' ~/.bashrc || echo 'export PG_DSN="postgresql+psycopg2://options_ingest@localhost:5432/options_eod"' >> ~/.bashrc
+grep -q '^export TRADIER_ACCESS_TOKEN=' ~/.bashrc || echo 'export TRADIER_ACCESS_TOKEN="YOUR_TRADIER_TOKEN_HERE"' >> ~/.bashrc
+
+# ───────────────────────────────────────────────
+# CLONE BACKEND + FRONTEND CODE
+# ───────────────────────────────────────────────
+cd ~/options_eod_backend
+rm -rf EODOptionTradier
+git clone https://github.com/aymagee92/EODOptionTradier.git
+cd EODOptionTradier
+
+# ───────────────────────────────────────────────
+# SCHEDULE BACKEND (WEEKDAYS @ 4:00 PM ET)
+# ───────────────────────────────────────────────
+(crontab -l 2>/dev/null; echo "0 16 * * 1-5 cd \$HOME/options_eod_backend/EODOptionTradier && source \$HOME/options_eod_backend/.venv/bin/activate && python backend >> backend.log 2>&1") | crontab -
+
+# ───────────────────────────────────────────────
+# RUN FRONTEND (FLASK, BACKGROUND)
+# ───────────────────────────────────────────────
+nohup "$HOME/options_eod_backend/.venv/bin/python" frontend \
+  > frontend.log 2>&1 &
+
+# ───────────────────────────────────────────────
+# OPEN PORT 8000 IF UFW IS ENABLED
+# ───────────────────────────────────────────────
+if command -v ufw >/dev/null 2>&1; then
+  sudo ufw allow 8000/tcp || true
+fi
+
+# ───────────────────────────────────────────────
+# FINAL MESSAGE (DYNAMIC IP)
+# ───────────────────────────────────────────────
+echo "Frontend: http://$(curl -s ifconfig.me):8000"
