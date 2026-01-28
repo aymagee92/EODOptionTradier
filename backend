@@ -2,8 +2,7 @@ import os
 import time
 import logging
 import requests
-import pandas as pd
-from datetime import datetime, date
+from datetime import date
 
 from sqlalchemy import create_engine, text
 from psycopg2.extras import execute_values
@@ -28,31 +27,39 @@ PG_DSN = os.environ["PG_DSN"]
 TICKERS_PER_BATCH = 10
 SLEEP_BETWEEN_BATCH_SECONDS = 10
 
+# Optional override (useful if your token is sandbox)
+# export TRADIER_BASE_URL=https://sandbox.tradier.com/v1
+BASE_URL = os.getenv("TRADIER_BASE_URL", "https://api.tradier.com/v1")
+
 HEADERS = {
-    "Authorization": f"Bearer {TRADIER_TOKEN}",
+    "Authorization": "Bearer {}".format(TRADIER_TOKEN),  # matches your working script
     "Accept": "application/json",
 }
-BASE_URL = "https://api.tradier.com/v1"
+
+session = requests.Session()
+session.headers.update(HEADERS)
 
 
 # ----------------------------
 # TRADIER HELPERS
 # ----------------------------
 def tradier_get(path: str, params: dict | None = None) -> dict:
-    r = requests.get(
-        f"{BASE_URL}{path}",
-        headers=HEADERS,
-        params=params,
-        timeout=30,
-    )
+    url = f"{BASE_URL}{path}"
+    r = session.get(url, params=params, timeout=30)
+
+    # If Tradier errors, log the body so you can see the real reason (401/403/429/etc.)
+    if r.status_code >= 400:
+        log.error("Tradier error %s %s params=%s body=%s", r.status_code, url, params, r.text[:2000])
+
     r.raise_for_status()
     return r.json()
 
 
 def get_expirations(ticker: str) -> list[str]:
+    # matches working script params style
     j = tradier_get(
         "/markets/options/expirations",
-        params={"symbol": ticker, "includeAllRoots": "true"},
+        params={"symbol": ticker, "includeAllRoots": "true", "strikes": "false"},
     )
     dates = (j.get("expirations") or {}).get("date", [])
     if isinstance(dates, str):
@@ -63,15 +70,13 @@ def get_expirations(ticker: str) -> list[str]:
 def get_chain(ticker: str, expiration: str) -> list[dict]:
     j = tradier_get(
         "/markets/options/chains",
-        params={
-            "symbol": ticker,
-            "expiration": expiration,
-            "greeks": "false",
-        },
+        params={"symbol": ticker, "expiration": expiration, "greeks": "false"},
     )
     options = (j.get("options") or {}).get("option", [])
     if isinstance(options, dict):
         options = [options]
+    if options is None:
+        options = []
     return options
 
 
@@ -83,12 +88,14 @@ def get_engine():
 
 
 def ensure_schema(engine):
+    # IMPORTANT FIX: include symbol in PK so tickers don't overwrite each other
     ddl = """
     CREATE TABLE IF NOT EXISTS option_chain_eod (
         quoteDate        DATE NOT NULL,
+        symbol           TEXT NOT NULL,
+
         underlyingLast   NUMERIC,
         expireDate       DATE NOT NULL,
-
         strike           NUMERIC NOT NULL,
 
         callVolume       BIGINT,
@@ -105,7 +112,7 @@ def ensure_schema(engine):
         itmPercPuts      NUMERIC,
         dte              INTEGER,
 
-        PRIMARY KEY (quoteDate, expireDate, strike)
+        PRIMARY KEY (quoteDate, symbol, expireDate, strike)
     );
     """
     with engine.begin() as conn:
@@ -117,14 +124,17 @@ def upsert_rows(engine, rows: list[dict]):
         return
 
     cols = list(rows[0].keys())
-    tuples = [tuple(r[c] for c in cols) for r in rows]
+    tuples = [tuple(r.get(c) for c in cols) for r in rows]
+
+    conflict_cols = ("quoteDate", "symbol", "expireDate", "strike")
+    update_cols = [c for c in cols if c not in conflict_cols]
 
     sql = f"""
     INSERT INTO option_chain_eod ({",".join(cols)})
     VALUES %s
-    ON CONFLICT (quoteDate, expireDate, strike)
+    ON CONFLICT ({",".join(conflict_cols)})
     DO UPDATE SET
-    """ + ", ".join(f"{c}=EXCLUDED.{c}" for c in cols if c not in ("quoteDate", "expireDate", "strike"))
+    """ + ", ".join(f"{c}=EXCLUDED.{c}" for c in update_cols)
 
     with engine.begin() as conn:
         raw = conn.connection
@@ -144,7 +154,7 @@ def chunked(lst, n):
 # MAIN
 # ----------------------------
 def run_eod():
-    log.info("EOD RUN START")
+    log.info("EOD RUN START | base_url=%s", BASE_URL)
 
     engine = get_engine()
     ensure_schema(engine)
@@ -152,69 +162,88 @@ def run_eod():
     run_date = date.today()
 
     for batch_num, tickers_batch in enumerate(chunked(TICKERS, TICKERS_PER_BATCH), start=1):
-        log.info(f"Batch {batch_num}: {tickers_batch}")
+        log.info("Batch %s: %s", batch_num, tickers_batch)
 
         for ticker in tickers_batch:
-            expirations = get_expirations(ticker)
+            try:
+                expirations = get_expirations(ticker)
+                if not expirations:
+                    log.warning("%s: no expirations returned", ticker)
+                    continue
 
-            for exp in expirations:
-                exp_date = date.fromisoformat(exp)
-                dte = (exp_date - run_date).days
+                for exp in expirations:
+                    exp_date = date.fromisoformat(exp)
+                    dte = (exp_date - run_date).days
 
-                chain = get_chain(ticker, exp)
+                    chain = get_chain(ticker, exp)
+                    if not chain:
+                        # Not necessarily fatal; Tradier can return empty options sometimes
+                        log.warning("%s %s: empty chain", ticker, exp)
+                        continue
 
-                calls = {}
-                puts = {}
-                underlying = None
+                    calls = {}
+                    puts = {}
+                    underlying = None
 
-                for o in chain:
-                    underlying = o.get("underlying_last")
-                    strike = o.get("strike")
+                    for o in chain:
+                        # underlying_last sometimes repeats; just take what we see
+                        if underlying is None:
+                            underlying = o.get("underlying_last")
 
-                    if o.get("option_type") == "call":
-                        calls[strike] = o
-                    elif o.get("option_type") == "put":
-                        puts[strike] = o
+                        strike = o.get("strike")
+                        if strike is None:
+                            continue
 
-                rows = []
-                for strike in set(calls) | set(puts):
-                    call = calls.get(strike, {})
-                    put = puts.get(strike, {})
+                        ot = o.get("option_type")
+                        if ot == "call":
+                            calls[strike] = o
+                        elif ot == "put":
+                            puts[strike] = o
 
-                    callBid = call.get("bid")
-                    callAsk = call.get("ask")
-                    putBid = put.get("bid")
-                    putAsk = put.get("ask")
+                    rows = []
+                    for strike in set(calls) | set(puts):
+                        call = calls.get(strike, {}) or {}
+                        put = puts.get(strike, {}) or {}
 
-                    callMid = (callBid + callAsk) / 2 if callBid is not None and callAsk is not None else None
-                    putMid = (putBid + putAsk) / 2 if putBid is not None and putAsk is not None else None
+                        callBid = call.get("bid")
+                        callAsk = call.get("ask")
+                        putBid = put.get("bid")
+                        putAsk = put.get("ask")
 
-                    itmPercCalls = ((underlying - strike) / strike) * 100 if underlying and strike else None
-                    itmPercPuts = -itmPercCalls if itmPercCalls is not None else None
+                        callMid = (callBid + callAsk) / 2 if callBid is not None and callAsk is not None else None
+                        putMid = (putBid + putAsk) / 2 if putBid is not None and putAsk is not None else None
 
-                    rows.append({
-                        "quoteDate": run_date,
-                        "underlyingLast": underlying,
-                        "expireDate": exp_date,
-                        "strike": strike,
+                        itmPercCalls = ((underlying - strike) / strike) * 100 if underlying not in (None, 0) and strike not in (None, 0) else None
+                        itmPercPuts = (-itmPercCalls) if itmPercCalls is not None else None
 
-                        "callVolume": call.get("volume"),
-                        "callBid": callBid,
-                        "callAsk": callAsk,
-                        "callMid": callMid,
+                        rows.append({
+                            "quoteDate": run_date,
+                            "symbol": ticker,
 
-                        "putVolume": put.get("volume"),
-                        "putBid": putBid,
-                        "putAsk": putAsk,
-                        "putMid": putMid,
+                            "underlyingLast": underlying,
+                            "expireDate": exp_date,
+                            "strike": strike,
 
-                        "itmPercCalls": itmPercCalls,
-                        "itmPercPuts": itmPercPuts,
-                        "dte": dte,
-                    })
+                            "callVolume": call.get("volume"),
+                            "callBid": callBid,
+                            "callAsk": callAsk,
+                            "callMid": callMid,
 
-                upsert_rows(engine, rows)
-                log.info(f"{ticker} {exp}: saved {len(rows)} rows")
+                            "putVolume": put.get("volume"),
+                            "putBid": putBid,
+                            "putAsk": putAsk,
+                            "putMid": putMid,
+
+                            "itmPercCalls": itmPercCalls,
+                            "itmPercPuts": itmPercPuts,
+                            "dte": dte,
+                        })
+
+                    upsert_rows(engine, rows)
+                    log.info("%s %s: saved %s rows", ticker, exp, len(rows))
+
+            except Exception as e:
+                log.exception("%s: failed in ticker loop: %s", ticker, e)
 
         time.sleep(SLEEP_BETWEEN_BATCH_SECONDS)
 
@@ -223,4 +252,5 @@ def run_eod():
 
 if __name__ == "__main__":
     run_eod()
+
 
