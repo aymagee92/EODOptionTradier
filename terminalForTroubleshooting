@@ -1,6 +1,7 @@
 # =========================================================
 # TROUBLESHOOT SETUP – MANUAL RUN (NO CRON)
 # Goal: create DB + table, run backend manually, then run frontend
+# Includes: verify DB exists AFTER Postgres data_directory move
 # =========================================================
 
 # ───────────────────────────────────────────────
@@ -60,11 +61,12 @@ sudo sed -i "s|^#\?listen_addresses =.*|listen_addresses = 'localhost'|" \
 sudo systemctl start postgresql
 
 # ───────────────────────────────────────────────
-# CREATE DATABASE + USER (SAFE TO RE-RUN)
+# CREATE ROLE + VERIFY/CREATE DATABASE (POST-MOVE)
 # ───────────────────────────────────────────────
 DB_NAME="options_eod"
 DB_USER="options_ingest"
 
+# Ensure role exists
 sudo -u postgres psql <<SQL
 DO \$\$
 BEGIN
@@ -73,15 +75,11 @@ BEGIN
   END IF;
 END
 \$\$;
-
-DO \$\$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_database WHERE datname='${DB_NAME}') THEN
-    CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};
-  END IF;
-END
-\$\$;
 SQL
+
+# Verify DB exists in the CURRENT running cluster; create if missing
+sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 \
+  || sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
 
 # ───────────────────────────────────────────────
 # ALLOW PASSWORDLESS LOCAL ACCESS
@@ -100,6 +98,7 @@ export TRADIER_ACCESS_TOKEN="OUOFRjuCoP5C3uSBni56tOdaUhOG"
 
 # ───────────────────────────────────────────────
 # CLONE (FRESH)
+# NOTE: this overwrites local edits. Remove rm -rf/git clone if you edited files locally.
 # ───────────────────────────────────────────────
 cd ~/options_eod_backend
 rm -rf EODOptionTradier
@@ -107,8 +106,7 @@ git clone https://github.com/aymagee92/EODOptionTradier.git
 cd EODOptionTradier
 
 # ───────────────────────────────────────────────
-# MANUAL: CREATE THE TABLE (RUN BACKEND ONCE)
-# (Backend will create table via ensure_schema)
+# MANUAL: RUN BACKEND ONCE (CREATES TABLE VIA ensure_schema)
 # ───────────────────────────────────────────────
 source ~/options_eod_backend/.venv/bin/activate
 python backend
@@ -129,3 +127,4 @@ if command -v ufw >/dev/null 2>&1; then
 fi
 
 echo "Frontend: http://$(curl -s ifconfig.me):8000"
+
