@@ -3,27 +3,24 @@ from sqlalchemy import create_engine, text
 import os
 
 app = Flask(__name__)
-
 engine = create_engine(os.environ["PG_DSN"])
 
 COLUMNS = [
-    "run_date",
-    "captured_at_utc",
-    "ticker",
-    "contract_symbol",
-    "expiration_date",
+    "quoteDate",
+    "underlyingLast",
+    "expireDate",
+    "callVolume",
+    "callBid",
+    "callAsk",
+    "callMid",
     "strike",
-    "option_type",
-    "bid",
-    "ask",
-    "last",
-    "volume",
-    "open_interest",
-    "delta",
-    "gamma",
-    "theta",
-    "vega",
-    "iv",
+    "putMid",
+    "putBid",
+    "putAsk",
+    "putVolume",
+    "itmPercCalls",
+    "itmPercPuts",
+    "dte",
 ]
 
 TABLE = "option_chain_eod"
@@ -39,7 +36,7 @@ TEMPLATE = """
     {% for col in columns %}
       <th>
         {{ col }}<br>
-        <input type="text" name="f_{{ col }}" value="{{ filters.get(col,'') }}" size="8"><br>
+        <input type="text" name="f_{{ col }}" value="{{ filters.get(col,'') }}" size="10"><br>
         <select name="s_{{ col }}">
           <option value="">—</option>
           <option value="asc" {% if sorts.get(col)=='asc' %}selected{% endif %}>▲</option>
@@ -52,7 +49,7 @@ TEMPLATE = """
 
 <br>
 Rows:
-<input type="number" name="limit" value="{{ limit }}" min="1" max="1000">
+<input type="number" name="limit" value="{{ limit }}" min="1" max="5000">
 <button type="submit">Run</button>
 </form>
 
@@ -70,7 +67,7 @@ Rows:
   {% for row in rows %}
     <tr>
       {% for col in columns %}
-        <td>{{ row[col] }}</td>
+        <td>{{ row.get(col) }}</td>
       {% endfor %}
     </tr>
   {% endfor %}
@@ -102,7 +99,7 @@ def index():
 
     order_sql = ""
     if sorts:
-        order_parts = [f"{col} {dir}" for col, dir in sorts.items()]
+        order_parts = [f"{col} {direction}" for col, direction in sorts.items()]
         order_sql = "ORDER BY " + ", ".join(order_parts)
 
     limit = int(request.args.get("limit", 100))
