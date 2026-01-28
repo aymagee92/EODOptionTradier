@@ -2,7 +2,7 @@ import os
 import time
 import logging
 import requests
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import create_engine, text
 from psycopg2.extras import execute_values
@@ -27,7 +27,7 @@ PG_DSN = os.environ["PG_DSN"]
 TICKERS_PER_BATCH = 10
 SLEEP_BETWEEN_BATCH_SECONDS = 10
 
-# REAL / LIVE ONLY (no sandbox)
+# LIVE ONLY
 BASE_URL = "https://api.tradier.com/v1"
 
 HEADERS = {
@@ -35,7 +35,6 @@ HEADERS = {
     "Accept": "application/json",
 }
 
-# Quotes batching: keep reasonable to avoid URL length / server limits
 QUOTES_SYMBOLS_PER_CALL = 50
 
 session = requests.Session()
@@ -48,14 +47,10 @@ def tradier_get(path: str, params: dict | None = None) -> dict:
     url = f"{BASE_URL}{path}"
     r = session.get(url, params=params, timeout=30)
 
-    # Log useful error details
     if r.status_code >= 400:
         log.error(
             "Tradier error %s %s params=%s body=%s",
-            r.status_code,
-            url,
-            params,
-            r.text[:2000],
+            r.status_code, url, params, r.text[:2000]
         )
 
     r.raise_for_status()
@@ -91,14 +86,29 @@ def chunked(lst, n):
         yield lst[i:i + n]
 
 
+def build_occ_symbol(underlying: str, expiration_iso: str, cp: str, strike: float) -> str:
+    """
+    Build OCC symbol like: AAPL260206C00257500
+    underlying: AAPL
+    expiration_iso: 2026-02-06 -> 260206
+    cp: 'C' or 'P'
+    strike: 257.5 -> 257500 -> '00257500' (strike*1000, padded to 8 digits)
+    """
+    dt = datetime.strptime(expiration_iso, "%Y-%m-%d").date()
+    yymmdd = dt.strftime("%y%m%d")
+    strike_int = int(round(float(strike) * 1000))
+    return f"{underlying}{yymmdd}{cp}{strike_int:08d}"
+
+
 def get_quotes_map(symbols: list[str]) -> dict[str, dict]:
     """
-    Calls /markets/quotes and returns a dict: { symbol: quote_dict }.
-    Handles Tradier's "single dict vs list" response shape.
+    GET /markets/quotes?symbols=...
+    Returns map: symbol -> quote dict
+    Handles single dict vs list response.
     """
     quotes_by_symbol: dict[str, dict] = {}
 
-    # Dedup + remove empties while preserving order
+    # dedupe preserve order
     seen = set()
     clean = []
     for s in symbols:
@@ -115,10 +125,9 @@ def get_quotes_map(symbols: list[str]) -> dict[str, dict]:
             params={"symbols": ",".join(batch), "greeks": "false"},
         )
 
-        q = ((j.get("quotes") or {}).get("quote")) if isinstance(j, dict) else None
+        q = (j.get("quotes") or {}).get("quote")
         if q is None:
             continue
-
         if isinstance(q, dict):
             q = [q]
 
@@ -138,20 +147,23 @@ def get_engine():
 
 
 def ensure_schema(engine):
+    # symbol FIRST column, and call/put on same row
     ddl = """
     CREATE TABLE IF NOT EXISTS option_chain_eod (
+        symbol           TEXT NOT NULL,      -- underlying (AAPL)
         quoteDate        DATE NOT NULL,
-        symbol           TEXT NOT NULL,
-
-        underlyingLast   NUMERIC,
         expireDate       DATE NOT NULL,
         strike           NUMERIC NOT NULL,
 
+        underlyingLast   NUMERIC,
+
+        callSymbol       TEXT,
         callVolume       BIGINT,
         callBid          NUMERIC,
         callAsk          NUMERIC,
         callMid          NUMERIC,
 
+        putSymbol        TEXT,
         putVolume        BIGINT,
         putBid           NUMERIC,
         putAsk           NUMERIC,
@@ -221,61 +233,45 @@ def run_eod():
                         log.warning("%s %s: empty chain", ticker, exp)
                         continue
 
-                    # Build strike->contract dicts AND capture option symbols for quotes
-                    calls_by_strike: dict[float, dict] = {}
-                    puts_by_strike: dict[float, dict] = {}
-                    call_sym_by_strike: dict[float, str] = {}
-                    put_sym_by_strike: dict[float, str] = {}
-
-                    option_symbols: list[str] = []
+                    # collect strikes found in chain (union of calls/puts)
+                    strikes: set[float] = set()
                     for o in chain:
-                        strike = o.get("strike")
-                        if strike is None:
-                            continue
+                        s = o.get("strike")
+                        if s is not None:
+                            strikes.add(s)
 
-                        ot = o.get("option_type")
-                        sym = o.get("symbol")  # OCC option symbol
+                    if not strikes:
+                        log.warning("%s %s: no strikes in chain", ticker, exp)
+                        continue
 
-                        if ot == "call":
-                            calls_by_strike[strike] = o
-                            if sym:
-                                call_sym_by_strike[strike] = sym
-                                option_symbols.append(sym)
-                        elif ot == "put":
-                            puts_by_strike[strike] = o
-                            if sym:
-                                put_sym_by_strike[strike] = sym
-                                option_symbols.append(sym)
+                    # Build OCC call+put symbols for every strike
+                    call_symbols = {s: build_occ_symbol(ticker, exp, "C", s) for s in strikes}
+                    put_symbols  = {s: build_occ_symbol(ticker, exp, "P", s) for s in strikes}
 
-                    # Fetch quotes for underlying + all options in this expiration
-                    # This is the key fix: bid/ask/volume/last come from quotes reliably.
-                    quotes_map = get_quotes_map([ticker] + option_symbols)
+                    # Quote underlying + all option contracts
+                    all_quote_symbols = [ticker] + list(call_symbols.values()) + list(put_symbols.values())
+                    quotes_map = get_quotes_map(all_quote_symbols)
 
-                    underlying_quote = quotes_map.get(ticker, {}) or {}
-                    underlying_last = underlying_quote.get("last")
+                    underlying_last = (quotes_map.get(ticker) or {}).get("last")
 
                     rows = []
-                    for strike in set(calls_by_strike) | set(puts_by_strike):
-                        call_contract = calls_by_strike.get(strike, {}) or {}
-                        put_contract = puts_by_strike.get(strike, {}) or {}
+                    for strike in strikes:
+                        call_sym = call_symbols[strike]
+                        put_sym = put_symbols[strike]
 
-                        call_sym = call_sym_by_strike.get(strike)
-                        put_sym = put_sym_by_strike.get(strike)
+                        call_q = quotes_map.get(call_sym, {}) or {}
+                        put_q  = quotes_map.get(put_sym, {}) or {}
 
-                        call_q = quotes_map.get(call_sym, {}) if call_sym else {}
-                        put_q = quotes_map.get(put_sym, {}) if put_sym else {}
+                        callBid = call_q.get("bid")
+                        callAsk = call_q.get("ask")
+                        putBid  = put_q.get("bid")
+                        putAsk  = put_q.get("ask")
 
-                        # Prefer quote fields; fall back to chain fields if present
-                        callBid = call_q.get("bid", call_contract.get("bid"))
-                        callAsk = call_q.get("ask", call_contract.get("ask"))
-                        putBid = put_q.get("bid", put_contract.get("bid"))
-                        putAsk = put_q.get("ask", put_contract.get("ask"))
-
-                        callVol = call_q.get("volume", call_contract.get("volume"))
-                        putVol = put_q.get("volume", put_contract.get("volume"))
+                        callVol = call_q.get("volume")
+                        putVol  = put_q.get("volume")
 
                         callMid = (callBid + callAsk) / 2 if callBid is not None and callAsk is not None else None
-                        putMid = (putBid + putAsk) / 2 if putBid is not None and putAsk is not None else None
+                        putMid  = (putBid + putAsk) / 2 if putBid is not None and putAsk is not None else None
 
                         itmPercCalls = (
                             ((underlying_last - strike) / strike) * 100
@@ -285,18 +281,20 @@ def run_eod():
                         itmPercPuts = (-itmPercCalls) if itmPercCalls is not None else None
 
                         rows.append({
-                            "quoteDate": run_date,
                             "symbol": ticker,
-
-                            "underlyingLast": underlying_last,
+                            "quoteDate": run_date,
                             "expireDate": exp_date,
                             "strike": strike,
 
+                            "underlyingLast": underlying_last,
+
+                            "callSymbol": call_sym,
                             "callVolume": callVol,
                             "callBid": callBid,
                             "callAsk": callAsk,
                             "callMid": callMid,
 
+                            "putSymbol": put_sym,
                             "putVolume": putVol,
                             "putBid": putBid,
                             "putAsk": putAsk,
