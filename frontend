@@ -1,6 +1,3 @@
-cd ~/options_eod_backend/EODOptionTradier
-
-cat << 'EOF' > frontend.py
 from flask import Flask, request, render_template_string
 from sqlalchemy import create_engine, text
 import os
