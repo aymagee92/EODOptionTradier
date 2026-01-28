@@ -9,28 +9,29 @@ engine = create_engine(os.environ["PG_DSN"])
 
 TABLE = "option_chain_eod"
 
+# IMPORTANT: column names MUST be lowercase (Postgres folds identifiers)
 COLUMNS = [
     "symbol",
-    "quoteDate",
-    "underlyingLast",
-    "expireDate",
+    "quotedate",
+    "underlyinglast",
+    "expiredate",
     "strike",
     "dte",
 
-    "callSymbol",
-    "callVolume",
-    "callBid",
-    "callAsk",
-    "callMid",
+    "callsymbol",
+    "callvolume",
+    "callbid",
+    "callask",
+    "callmid",
 
-    "putSymbol",
-    "putVolume",
-    "putBid",
-    "putAsk",
-    "putMid",
+    "putsymbol",
+    "putvolume",
+    "putbid",
+    "putask",
+    "putmid",
 
-    "itmPercCalls",
-    "itmPercPuts",
+    "itmperccalls",
+    "itmpercputs",
 ]
 
 TEMPLATE = """
@@ -107,12 +108,11 @@ def index():
     if where_clauses:
         where_sql = "WHERE " + " AND ".join(where_clauses)
 
-    order_sql = ""
     if sorts:
         order_parts = [f"{col} {direction}" for col, direction in sorts.items()]
         order_sql = "ORDER BY " + ", ".join(order_parts)
     else:
-        order_sql = "ORDER BY quoteDate DESC, symbol ASC, expireDate ASC, strike ASC"
+        order_sql = "ORDER BY quotedate DESC, symbol ASC, expiredate ASC, strike ASC"
 
     limit = int(request.args.get("limit", 100))
     params["limit"] = limit
@@ -158,4 +158,3 @@ def index():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
-
