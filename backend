@@ -1,0 +1,226 @@
+import os
+import time
+import logging
+import requests
+import pandas as pd
+from datetime import datetime, date
+
+from sqlalchemy import create_engine, text
+from psycopg2.extras import execute_values
+
+# ----------------------------
+# CONFIG
+# ----------------------------
+TICKERS = ["AAPL", "MSFT", "TSLA", "AMD"]  # replace with your list
+
+TRADIER_TOKEN = os.environ["TRADIER_ACCESS_TOKEN"]
+PG_DSN = os.environ["PG_DSN"]  # e.g. postgresql+psycopg2://user:pass@host:5432/db
+
+# batching
+TICKERS_PER_BATCH = 10
+SLEEP_BETWEEN_BATCH_SECONDS = 10
+
+# market close waiting (no buffer)
+POLL_SECONDS = 1
+MAX_WAIT_FOR_CLOSE_SECONDS = 60 * 30  # safety: 30 minutes
+
+# pacing inside a ticker (avoid spiking chains calls)
+SLEEP_BETWEEN_CHAIN_CALLS_SECONDS = 0.0  # set to 0.1-0.3 if you hit limits
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+HEADERS = {"Authorization": f"Bearer {TRADIER_TOKEN}", "Accept": "application/json"}
+BASE_URL = "https://api.tradier.com/v1"
+
+
+# ----------------------------
+# TRADIER HELPERS
+# ----------------------------
+def tradier_get(path: str, params: dict | None = None) -> dict:
+    r = requests.get(f"{BASE_URL}{path}", headers=HEADERS, params=params, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+def get_market_state() -> str:
+    j = tradier_get("/markets/clock")
+    return (j.get("clock") or {}).get("state", "").lower()
+
+def get_expirations(ticker: str) -> list[str]:
+    j = tradier_get("/markets/options/expirations", params={"symbol": ticker, "includeAllRoots": "true"})
+    dates = (j.get("expirations") or {}).get("date", [])
+    if isinstance(dates, str):
+        dates = [dates]
+    return dates
+
+def get_chain(ticker: str, expiration: str) -> list[dict]:
+    j = tradier_get("/markets/options/chains", params={"symbol": ticker, "expiration": expiration, "greeks": "true"})
+    options = (j.get("options") or {}).get("option", [])
+    if isinstance(options, dict):
+        options = [options]
+    return options
+
+
+# ----------------------------
+# POSTGRES HELPERS
+# ----------------------------
+def get_engine():
+    return create_engine(PG_DSN, pool_pre_ping=True)
+
+def ensure_schema(engine):
+    ddl = """
+    CREATE TABLE IF NOT EXISTS option_chain_eod (
+        run_date        DATE NOT NULL,
+        captured_at_utc TIMESTAMPTZ NOT NULL,
+
+        ticker          TEXT NOT NULL,
+        contract_symbol TEXT NOT NULL,
+        expiration_date DATE,
+        strike          NUMERIC,
+        option_type     TEXT,
+
+        bid             NUMERIC,
+        ask             NUMERIC,
+        last            NUMERIC,
+        volume          BIGINT,
+        open_interest   BIGINT,
+
+        delta           NUMERIC,
+        gamma           NUMERIC,
+        theta           NUMERIC,
+        vega            NUMERIC,
+        iv              NUMERIC,
+
+        PRIMARY KEY (run_date, contract_symbol)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_option_chain_eod_ticker_run_date
+      ON option_chain_eod (ticker, run_date);
+    """
+    with engine.begin() as conn:
+        conn.execute(text(ddl))
+
+def upsert_rows(engine, rows: list[dict]):
+    if not rows:
+        return
+
+    df = pd.DataFrame(rows)
+    df["run_date"] = pd.to_datetime(df["run_date"]).dt.date
+
+    cols = [
+        "run_date", "captured_at_utc",
+        "ticker", "contract_symbol", "expiration_date", "strike", "option_type",
+        "bid", "ask", "last", "volume", "open_interest",
+        "delta", "gamma", "theta", "vega", "iv",
+    ]
+    tuples = list(df[cols].itertuples(index=False, name=None))
+
+    sql = f"""
+    INSERT INTO option_chain_eod ({",".join(cols)})
+    VALUES %s
+    ON CONFLICT (run_date, contract_symbol)
+    DO UPDATE SET
+      captured_at_utc = EXCLUDED.captured_at_utc,
+      ticker          = EXCLUDED.ticker,
+      expiration_date = EXCLUDED.expiration_date,
+      strike          = EXCLUDED.strike,
+      option_type     = EXCLUDED.option_type,
+      bid             = EXCLUDED.bid,
+      ask             = EXCLUDED.ask,
+      last            = EXCLUDED.last,
+      volume          = EXCLUDED.volume,
+      open_interest   = EXCLUDED.open_interest,
+      delta           = EXCLUDED.delta,
+      gamma           = EXCLUDED.gamma,
+      theta           = EXCLUDED.theta,
+      vega            = EXCLUDED.vega,
+      iv              = EXCLUDED.iv;
+    """
+
+    with engine.begin() as conn:
+        raw = conn.connection
+        with raw.cursor() as cur:
+            execute_values(cur, sql, tuples, page_size=2000)
+
+
+# ----------------------------
+# CONTROL FLOW
+# ----------------------------
+def wait_until_closed_no_buffer():
+    start = time.time()
+    while True:
+        state = get_market_state()
+        if state == "closed":
+            logging.info("Market is CLOSED. Starting immediately.")
+            return
+        if time.time() - start > MAX_WAIT_FOR_CLOSE_SECONDS:
+            raise TimeoutError(f"Market did not become 'closed' within limit. Last state: {state}")
+        time.sleep(POLL_SECONDS)
+
+def chunked(lst, n):
+    for i in range(0, len(lst), n):
+        yield lst[i:i+n]
+
+
+# ----------------------------
+# MAIN
+# ----------------------------
+def run_eod():
+    engine = get_engine()
+    ensure_schema(engine)
+
+    # Start exactly when the market is actually closed (no extra buffer)
+    wait_until_closed_no_buffer()
+
+    run_date = date.today().isoformat()
+
+    for batch_num, tickers_batch in enumerate(chunked(TICKERS, TICKERS_PER_BATCH), start=1):
+        captured_at_utc = datetime.utcnow().isoformat()  # timestamp per batch (or move inside per ticker if preferred)
+        logging.info(f"Batch {batch_num} starting: {tickers_batch}")
+
+        for ticker in tickers_batch:
+            try:
+                expirations = get_expirations(ticker)
+
+                rows = []
+                for exp in expirations:
+                    chain = get_chain(ticker, exp)
+
+                    for o in chain:
+                        greeks = o.get("greeks") or {}
+                        rows.append({
+                            "run_date": run_date,
+                            "captured_at_utc": captured_at_utc,
+                            "ticker": ticker,
+                            "contract_symbol": o.get("symbol"),
+                            "expiration_date": o.get("expiration_date"),
+                            "strike": o.get("strike"),
+                            "option_type": o.get("option_type"),
+                            "bid": o.get("bid"),
+                            "ask": o.get("ask"),
+                            "last": o.get("last"),
+                            "volume": o.get("volume"),
+                            "open_interest": o.get("open_interest"),
+                            "delta": greeks.get("delta"),
+                            "gamma": greeks.get("gamma"),
+                            "theta": greeks.get("theta"),
+                            "vega": greeks.get("vega"),
+                            "iv": greeks.get("iv"),
+                        })
+
+                    if SLEEP_BETWEEN_CHAIN_CALLS_SECONDS:
+                        time.sleep(SLEEP_BETWEEN_CHAIN_CALLS_SECONDS)
+
+                upsert_rows(engine, rows)
+                logging.info(f"{ticker}: saved {len(rows)} contracts")
+
+            except Exception as e:
+                logging.exception(f"{ticker}: failed: {e}")
+
+        logging.info(f"Batch {batch_num} complete. Sleeping {SLEEP_BETWEEN_BATCH_SECONDS}s...")
+        time.sleep(SLEEP_BETWEEN_BATCH_SECONDS)
+
+    logging.info("EOD run complete.")
+
+
+if __name__ == "__main__":
+    run_eod()
