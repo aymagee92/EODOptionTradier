@@ -8,297 +8,172 @@ from datetime import date, datetime
 from sqlalchemy import create_engine, text
 from psycopg2.extras import execute_values
 
-# ----------------------------
-# LOGGING (VERBOSE)
-# ----------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-)
-log = logging.getLogger(__name__)
-
-# ----------------------------
+# ============================
 # CONFIG
-# ----------------------------
+# ============================
 TICKERS = ["AAPL", "MSFT", "TSLA", "AMD"]
+BASE_URL = "https://api.tradier.com/v1"
 
 TRADIER_TOKEN = os.environ["TRADIER_ACCESS_TOKEN"]
 PG_DSN = os.environ["PG_DSN"]
 
-TICKERS_PER_BATCH = 10
-SLEEP_BETWEEN_BATCH_SECONDS = 10
-
-# LIVE ONLY
-BASE_URL = "https://api.tradier.com/v1"
-
-HEADERS = {
-    "Authorization": "Bearer {}".format(TRADIER_TOKEN),
-    "Accept": "application/json",
-}
-
-session = requests.Session()
-session.headers.update(HEADERS)
-
-# Turn this on/off to dump raw JSON to terminal
 DEBUG_DUMP_TRADIER_JSON = True
 
+# ============================
+# LOGGING
+# ============================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+log = logging.getLogger("EOD")
 
-# ----------------------------
-# DEBUG PRINT
-# ----------------------------
-def debug_print_tradier_response(label: str, payload: dict):
-    if not DEBUG_DUMP_TRADIER_JSON:
-        return
-    print("\n" + "=" * 100)
-    print(f"DEBUG: {label}")
-    print("=" * 100)
-    print(json.dumps(payload, indent=2))
-    print("=" * 100 + "\n")
+# ============================
+# HTTP
+# ============================
+session = requests.Session()
+session.headers.update({
+    "Authorization": f"Bearer {TRADIER_TOKEN}",
+    "Accept": "application/json",
+})
 
-
-# ----------------------------
-# TRADIER HELPERS
-# ----------------------------
-def tradier_get(path: str, params: dict | None = None) -> dict:
-    url = f"{BASE_URL}{path}"
-    r = session.get(url, params=params, timeout=30)
-
-    # Helpful diagnostics on errors
-    if r.status_code >= 400:
-        log.error("Tradier error %s %s params=%s body=%s", r.status_code, url, params, r.text[:2000])
-
+def tradier_get(path, params):
+    r = session.get(f"{BASE_URL}{path}", params=params, timeout=30)
     r.raise_for_status()
     j = r.json()
-
-    # Optional: dump ALL responses
     if DEBUG_DUMP_TRADIER_JSON:
-        debug_print_tradier_response(f"GET {path} params={params}", j)
-
+        print("\n" + "="*80)
+        print(f"DEBUG {path} {params}")
+        print(json.dumps(j, indent=2))
+        print("="*80)
     return j
 
+# ============================
+# DB
+# ============================
+engine = create_engine(PG_DSN, pool_pre_ping=True)
 
-def get_expirations(ticker: str) -> list[str]:
-    j = tradier_get(
-        "/markets/options/expirations",
-        params={"symbol": ticker, "includeAllRoots": "true", "strikes": "false"},
-    )
-    dates = (j.get("expirations") or {}).get("date", [])
-    if isinstance(dates, str):
-        dates = [dates]
-    return dates
-
-
-def get_chain(ticker: str, expiration: str) -> list[dict]:
-    j = tradier_get(
-        "/markets/options/chains",
-        params={"symbol": ticker, "expiration": expiration, "greeks": "false"},
-    )
-    options = (j.get("options") or {}).get("option", [])
-    if isinstance(options, dict):
-        options = [options]
-    if options is None:
-        options = []
-    return options
-
-
-def chunked(lst, n):
-    for i in range(0, len(lst), n):
-        yield lst[i:i + n]
-
-
-def build_occ_symbol(underlying: str, expiration_iso: str, cp: str, strike: float) -> str:
-    """
-    Build OCC symbol like: AAPL260206C00257500
-    underlying + YYMMDD + C/P + strike*1000 padded to 8 digits
-    """
-    dt = datetime.strptime(expiration_iso, "%Y-%m-%d").date()
-    yymmdd = dt.strftime("%y%m%d")
-    strike_int = int(round(float(strike) * 1000))
-    return f"{underlying}{yymmdd}{cp}{strike_int:08d}"
-
-
-# ----------------------------
-# POSTGRES
-# ----------------------------
-def get_engine():
-    return create_engine(PG_DSN, pool_pre_ping=True)
-
-
-def ensure_schema(engine):
+def ensure_schema():
     ddl = """
     CREATE TABLE IF NOT EXISTS option_chain_eod (
-        symbol           TEXT NOT NULL,      -- underlying (AAPL)
-        quoteDate        DATE NOT NULL,
-        underlyingLast   NUMERIC,
-        expireDate       DATE NOT NULL,
-        strike           NUMERIC NOT NULL,
+        symbol TEXT NOT NULL,
+        quoteDate DATE NOT NULL,
+        underlyingLast NUMERIC,
+        expireDate DATE NOT NULL,
+        strike NUMERIC NOT NULL,
 
-        callSymbol       TEXT,
-        callVolume       BIGINT,
-        callBid          NUMERIC,
-        callAsk          NUMERIC,
-        callMid          NUMERIC,
+        callSymbol TEXT,
+        callVolume BIGINT,
+        callBid NUMERIC,
+        callAsk NUMERIC,
+        callMid NUMERIC,
 
-        putSymbol        TEXT,
-        putVolume        BIGINT,
-        putBid           NUMERIC,
-        putAsk           NUMERIC,
-        putMid           NUMERIC,
+        putSymbol TEXT,
+        putVolume BIGINT,
+        putBid NUMERIC,
+        putAsk NUMERIC,
+        putMid NUMERIC,
 
-        itmPercCalls     NUMERIC,
-        itmPercPuts      NUMERIC,
-        dte              INTEGER,
+        itmPercCalls NUMERIC,
+        itmPercPuts NUMERIC,
+        dte INTEGER,
 
         PRIMARY KEY (quoteDate, symbol, expireDate, strike)
     );
     """
-    with engine.begin() as conn:
-        conn.execute(text(ddl))
+    with engine.begin() as c:
+        c.execute(text(ddl))
 
-
-def upsert_rows(engine, rows: list[dict]):
+def upsert(rows):
     if not rows:
         return
-
     cols = list(rows[0].keys())
-    tuples = [tuple(r.get(c) for c in cols) for r in rows]
-
-    conflict_cols = ("quoteDate", "symbol", "expireDate", "strike")
-    update_cols = [c for c in cols if c not in conflict_cols]
-
     sql = f"""
     INSERT INTO option_chain_eod ({",".join(cols)})
     VALUES %s
-    ON CONFLICT ({",".join(conflict_cols)})
+    ON CONFLICT (quoteDate, symbol, expireDate, strike)
     DO UPDATE SET
-    """ + ", ".join(f"{c}=EXCLUDED.{c}" for c in update_cols)
-
+    """ + ", ".join(f"{c}=EXCLUDED.{c}" for c in cols if c not in ("quoteDate","symbol","expireDate","strike"))
     with engine.begin() as conn:
-        raw = conn.connection
-        with raw.cursor() as cur:
-            execute_values(cur, sql, tuples, page_size=1000)
+        execute_values(conn.connection.cursor(), sql, [tuple(r[c] for c in cols) for r in rows])
 
-
-# ----------------------------
+# ============================
 # MAIN
-# ----------------------------
-def run_eod():
-    log.info("EOD RUN START | base_url=%s", BASE_URL)
+# ============================
+def run():
+    ensure_schema()
+    today = date.today()
 
-    engine = get_engine()
-    ensure_schema(engine)
+    for ticker in TICKERS:
+        expirations = tradier_get(
+            "/markets/options/expirations",
+            {"symbol": ticker, "includeAllRoots": "true"}
+        )["expirations"]["date"]
 
-    run_date = date.today()
+        for exp in expirations:
+            chain = tradier_get(
+                "/markets/options/chains",
+                {"symbol": ticker, "expiration": exp, "greeks": "false"}
+            )["options"]["option"]
 
-    for batch_num, tickers_batch in enumerate(chunked(TICKERS, TICKERS_PER_BATCH), start=1):
-        log.info("Batch %s: %s", batch_num, tickers_batch)
+            # ---- FIX 1: get underlying_last ONCE
+            underlying_last = None
+            for o in chain:
+                if o.get("underlying_last") is not None:
+                    underlying_last = o["underlying_last"]
+                    break
 
-        for ticker in tickers_batch:
-            try:
-                expirations = get_expirations(ticker)
-                if not expirations:
-                    log.warning("%s: no expirations returned", ticker)
-                    continue
+            # ---- FIX 2: normalize strikes to INT (x1000)
+            calls = {}
+            puts = {}
 
-                for exp in expirations:
-                    exp_date = date.fromisoformat(exp)
-                    dte = (exp_date - run_date).days
+            for o in chain:
+                strike_i = int(round(float(o["strike"]) * 1000))
+                if o["option_type"] == "call":
+                    calls[strike_i] = o
+                else:
+                    puts[strike_i] = o
 
-                    chain = get_chain(ticker, exp)
-                    if not chain:
-                        log.warning("%s %s: empty chain", ticker, exp)
-                        continue
+            rows = []
+            for strike_i in set(calls) | set(puts):
+                strike = strike_i / 1000
 
-                    # strikes found in chain
-                    strikes = set()
-                    for o in chain:
-                        s = o.get("strike")
-                        if s is not None:
-                            strikes.add(float(s))
+                call = calls.get(strike_i, {})
+                put  = puts.get(strike_i, {})
 
-                    if not strikes:
-                        log.warning("%s %s: no strikes in chain", ticker, exp)
-                        continue
+                cb, ca = call.get("bid"), call.get("ask")
+                pb, pa = put.get("bid"), put.get("ask")
 
-                    # Build OCC symbols for reference/debugging/storage
-                    call_symbols = {s: build_occ_symbol(ticker, exp, "C", s) for s in strikes}
-                    put_symbols  = {s: build_occ_symbol(ticker, exp, "P", s) for s in strikes}
+                rows.append({
+                    "symbol": ticker,
+                    "quoteDate": today,
+                    "underlyingLast": underlying_last,
+                    "expireDate": exp,
+                    "strike": strike,
 
-                    # Build maps from the CHAIN response itself (since you confirmed it includes bid/ask after hours)
-                    calls_by_strike = {}
-                    puts_by_strike = {}
-                    underlying_last = None
+                    "callSymbol": call.get("symbol"),
+                    "callVolume": call.get("volume"),
+                    "callBid": cb,
+                    "callAsk": ca,
+                    "callMid": (cb+ca)/2 if cb is not None and ca is not None else None,
 
-                    for o in chain:
-                        if underlying_last is None:
-                            underlying_last = o.get("underlying_last") or o.get("underlyingLast")
+                    "putSymbol": put.get("symbol"),
+                    "putVolume": put.get("volume"),
+                    "putBid": pb,
+                    "putAsk": pa,
+                    "putMid": (pb+pa)/2 if pb is not None and pa is not None else None,
 
-                        strike = o.get("strike")
-                        if strike is None:
-                            continue
-                        strike = float(strike)
+                    "itmPercCalls": ((underlying_last-strike)/strike)*100 if underlying_last else None,
+                    "itmPercPuts": None,
+                    "dte": (date.fromisoformat(exp) - today).days,
+                })
 
-                        ot = o.get("option_type")
-                        if ot == "call":
-                            calls_by_strike[strike] = o
-                        elif ot == "put":
-                            puts_by_strike[strike] = o
+            upsert(rows)
+            log.info("%s %s inserted %d rows", ticker, exp, len(rows))
+            time.sleep(1)
 
-                    rows = []
-                    for strike in strikes:
-                        call = calls_by_strike.get(strike, {}) or {}
-                        put  = puts_by_strike.get(strike, {}) or {}
-
-                        callBid = call.get("bid")
-                        callAsk = call.get("ask")
-                        putBid  = put.get("bid")
-                        putAsk  = put.get("ask")
-
-                        callMid = (callBid + callAsk) / 2 if callBid is not None and callAsk is not None else None
-                        putMid  = (putBid + putAsk) / 2 if putBid is not None and putAsk is not None else None
-
-                        itmPercCalls = (
-                            ((underlying_last - strike) / strike) * 100
-                            if underlying_last not in (None, 0) and strike not in (None, 0)
-                            else None
-                        )
-                        itmPercPuts = (-itmPercCalls) if itmPercCalls is not None else None
-
-                        rows.append({
-                            "symbol": ticker,
-                            "quoteDate": run_date,
-                            "underlyingLast": underlying_last,
-                            "expireDate": exp_date,
-                            "strike": strike,
-
-                            "callSymbol": call_symbols[strike],
-                            "callVolume": call.get("volume"),
-                            "callBid": callBid,
-                            "callAsk": callAsk,
-                            "callMid": callMid,
-
-                            "putSymbol": put_symbols[strike],
-                            "putVolume": put.get("volume"),
-                            "putBid": putBid,
-                            "putAsk": putAsk,
-                            "putMid": putMid,
-
-                            "itmPercCalls": itmPercCalls,
-                            "itmPercPuts": itmPercPuts,
-                            "dte": dte,
-                        })
-
-                    upsert_rows(engine, rows)
-                    log.info("%s %s: saved %s rows", ticker, exp, len(rows))
-
-            except Exception as e:
-                log.exception("%s: failed in ticker loop: %s", ticker, e)
-
-        time.sleep(SLEEP_BETWEEN_BATCH_SECONDS)
-
-    log.info("EOD RUN COMPLETE")
-
+    log.info("DONE")
 
 if __name__ == "__main__":
-    run_eod()
+    run()
 
