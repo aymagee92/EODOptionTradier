@@ -17,7 +17,7 @@ BASE_URL = "https://api.tradier.com/v1"
 TRADIER_TOKEN = os.environ["TRADIER_ACCESS_TOKEN"]
 PG_DSN = os.environ["PG_DSN"]
 
-DEBUG_DUMP_TRADIER_JSON = True
+DEBUG_DUMP_TRADIER_JSON = False
 
 # ============================
 # LOGGING
