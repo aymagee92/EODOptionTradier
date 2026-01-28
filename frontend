@@ -1,0 +1,83 @@
+cd ~/options_eod_backend/EODOptionTradier
+
+cat << 'EOF' > frontend.py
+from flask import Flask, request, render_template_string
+from sqlalchemy import create_engine, text
+import os
+
+app = Flask(__name__)
+
+engine = create_engine(os.environ["PG_DSN"])
+
+TEMPLATE = """
+<!doctype html>
+<title>Options DB</title>
+<h2>Database Tables</h2>
+
+<form method="get">
+  Table:
+  <select name="table">
+    {% for t in tables %}
+      <option value="{{t}}" {% if t==table %}selected{% endif %}>{{t}}</option>
+    {% endfor %}
+  </select>
+
+  Filter (SQL WHERE, optional):
+  <input type="text" name="where" size="40" value="{{where}}">
+
+  Rows:
+  <input type="number" name="limit" value="{{limit}}" min="1" max="1000">
+
+  <button type="submit">Run</button>
+</form>
+
+{% if rows %}
+  <h3>Results</h3>
+  <table border="1" cellpadding="4">
+    <tr>
+      {% for col in rows[0].keys() %}
+        <th>{{col}}</th>
+      {% endfor %}
+    </tr>
+    {% for row in rows %}
+      <tr>
+        {% for v in row.values() %}
+          <td>{{v}}</td>
+        {% endfor %}
+      </tr>
+    {% endfor %}
+  </table>
+{% endif %}
+"""
+
+@app.route("/", methods=["GET"])
+def index():
+    with engine.connect() as conn:
+        tables = [r[0] for r in conn.execute(
+            text("SELECT tablename FROM pg_tables WHERE schemaname='public'")
+        )]
+
+        table = request.args.get("table", tables[0] if tables else "")
+        where = request.args.get("where", "")
+        limit = int(request.args.get("limit", 100))
+
+        rows = []
+        if table:
+            sql = f"SELECT * FROM {table}"
+            if where:
+                sql += f" WHERE {where}"
+            sql += f" LIMIT {limit}"
+            rows = conn.execute(text(sql)).mappings().all()
+
+    return render_template_string(
+        TEMPLATE,
+        tables=tables,
+        table=table,
+        where=where,
+        limit=limit,
+        rows=rows
+    )
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8000)
+EOF
