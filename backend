@@ -3,7 +3,7 @@ import time
 import logging
 import random
 import requests
-from datetime import date, datetime, timezone
+from datetime import date
 
 from sqlalchemy import create_engine, text
 from psycopg2.extras import execute_values
@@ -19,19 +19,11 @@ log = logging.getLogger("EOD")
 # ----------------------------
 TICKERS = ["AAPL", "MSFT", "TSLA", "AMD"]
 
+
 TRADIER_TOKEN = os.environ["TRADIER_ACCESS_TOKEN"]
 PG_DSN = os.environ["PG_DSN"]
 
 BASE_URL = "https://api.tradier.com/v1"
-
-# Disk monitoring config (volume mount path on your droplet)
-# Your Postgres data_directory is on: /mnt/volume-nyc3-01/...
-# So this default should be correct; override with env if needed.
-VOLUME_MOUNT_PATH = os.environ.get("VOLUME_MOUNT_PATH", "/mnt/volume-nyc3-01")
-ROOT_MOUNT_PATH = os.environ.get("ROOT_MOUNT_PATH", "/")
-
-# Optional: take a disk snapshot after EOD run completes
-SNAPSHOT_AFTER_EOD = os.environ.get("SNAPSHOT_AFTER_EOD", "0") == "1"
 
 # Performance knobs
 HTTP_TIMEOUT = 20
@@ -40,7 +32,13 @@ TICKERS_PER_BATCH = 10
 SLEEP_BETWEEN_TICKERS_SECONDS = 0.0     # set >0 if you hit rate limits
 SLEEP_BETWEEN_EXPIRATIONS_SECONDS = 0.0 # set >0 if you hit rate limits
 
+
+
 HEADERS = {
+
+
+
+
     "Authorization": f"Bearer {TRADIER_TOKEN}",
     "Accept": "application/json",
 }
@@ -163,96 +161,6 @@ def upsert_rows(engine, rows: list[dict]):
         raw = conn.connection
         with raw.cursor() as cur:
             execute_values(cur, sql, tuples, page_size=2000)
-
-# ----------------------------
-# DISK SNAPSHOTS (new)
-# ----------------------------
-def ensure_disk_schema(engine):
-    ddl = """
-    CREATE TABLE IF NOT EXISTS disk_usage_daily (
-        captured_at        TIMESTAMPTZ PRIMARY KEY,
-        root_path          TEXT NOT NULL,
-        volume_path        TEXT NOT NULL,
-
-        root_total_bytes   BIGINT NOT NULL,
-        root_used_bytes    BIGINT NOT NULL,
-
-        vol_total_bytes    BIGINT NOT NULL,
-        vol_used_bytes     BIGINT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS disk_usage_daily_captured_at_idx
-    ON disk_usage_daily (captured_at);
-    """
-    with engine.begin() as conn:
-        conn.execute(text(ddl))
-
-def _fs_usage_bytes(path: str) -> tuple[int, int]:
-    """
-    Returns (total_bytes, used_bytes) for the filesystem containing 'path'
-    using os.statvfs (no shell calls).
-    """
-    st = os.statvfs(path)
-    total = st.f_frsize * st.f_blocks
-    free = st.f_frsize * st.f_bfree
-    used = total - free
-    return int(total), int(used)
-
-def record_disk_snapshot(engine, captured_at: datetime | None = None):
-    """
-    Inserts one snapshot row per *day*. If you run multiple times the same day,
-    it will no-op (keeps the first row for that day).
-    """
-    ensure_disk_schema(engine)
-
-    if captured_at is None:
-        captured_at = datetime.now(timezone.utc)
-
-    # One row per calendar day (UTC) to keep it simple and consistent.
-    # If you prefer America/New_York, we can switch later.
-    snap_day = captured_at.date()
-
-    root_total, root_used = _fs_usage_bytes(ROOT_MOUNT_PATH)
-    vol_total, vol_used = _fs_usage_bytes(VOLUME_MOUNT_PATH)
-
-    sql = """
-    INSERT INTO disk_usage_daily (
-        captured_at, root_path, volume_path,
-        root_total_bytes, root_used_bytes,
-        vol_total_bytes,  vol_used_bytes
-    )
-    SELECT
-        :captured_at, :root_path, :volume_path,
-        :root_total_bytes, :root_used_bytes,
-        :vol_total_bytes,  :vol_used_bytes
-    WHERE NOT EXISTS (
-        SELECT 1
-        FROM disk_usage_daily
-        WHERE captured_at::date = :snap_day
-    );
-    """
-
-    with engine.begin() as conn:
-        conn.execute(
-            text(sql),
-            {
-                "captured_at": captured_at,
-                "snap_day": snap_day,
-                "root_path": ROOT_MOUNT_PATH,
-                "volume_path": VOLUME_MOUNT_PATH,
-                "root_total_bytes": root_total,
-                "root_used_bytes": root_used,
-                "vol_total_bytes": vol_total,
-                "vol_used_bytes": vol_used,
-            },
-        )
-
-    log.info(
-        "DISK SNAPSHOT | day=%s | root=%s/%s bytes | vol=%s/%s bytes",
-        snap_day.isoformat(),
-        root_used, root_total,
-        vol_used, vol_total,
-    )
 
 # ----------------------------
 # UTIL
@@ -379,26 +287,8 @@ def run_eod():
 
     log.info("EOD RUN COMPLETE")
 
-    if SNAPSHOT_AFTER_EOD:
-        try:
-            record_disk_snapshot(engine)
-        except Exception as e:
-            log.exception("DISK SNAPSHOT AFTER EOD FAILED: %s", e)
-
-def run_snapshot_only():
-    engine = get_engine()
-    record_disk_snapshot(engine)
-
 if __name__ == "__main__":
-    # Usage:
-    #   python backend.py            -> run EOD ingest
-    #   python backend.py snapshot   -> record disk snapshot only (for cron)
-    import sys
-
-    if len(sys.argv) > 1 and sys.argv[1].lower() == "snapshot":
-        run_snapshot_only()
-    else:
-        run_eod()
+    run_eod()
 
 
 
