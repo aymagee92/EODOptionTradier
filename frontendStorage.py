@@ -10,9 +10,15 @@ HEADER_HTML = r"""
   <div class="title">
     <h1>Storage Usage Over Time</h1>
     <div class="topnav">
-      <a class="tab" href="/">Option Info</a>
-      <a class="tab active" href="{{ url_for('storage_dashboard') }}">Storage Graph</a>
-      <a class="tab" href="/stockdata">Stock Data</a>
+      <a class="tab {% if active_page=='options' %}active{% endif %}" href="{{ url_for('index') }}">
+        Option Info
+      </a>
+      <a class="tab {% if active_page=='storage' %}active{% endif %}" href="{{ url_for('storage_dashboard') }}">
+        Storage Graph
+      </a>
+      <a class="tab {% if active_page=='stockdata' %}active{% endif %}" href="/stockdata">
+        Stock Data
+      </a>
     </div>
     <div class="sub">
       Tracks daily disk usage snapshots (root + volume) from
@@ -145,6 +151,7 @@ def register_storage_routes(app, engine):
 
         return render_template_string(
             STORAGE_PAGE,
+            active_page="storage",
             points=points,
             labels=labels,
             root_pct=root_pct,
