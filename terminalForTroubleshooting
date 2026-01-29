@@ -1,7 +1,10 @@
 # =========================================================
 # TROUBLESHOOT SETUP – MANUAL RUN (NO CRON)
 # Goal: create DB + table, run backend immediately,
-#       run storage snapshot once, then run frontends
+#       run storage snapshot once, then run SINGLE frontend
+#       on port 8000 serving:
+#         /          (options)
+#         /storage   (storage dashboard)
 # =========================================================
 
 # ───────────────────────────────────────────────
@@ -105,44 +108,43 @@ git clone https://github.com/aymagee92/EODOptionTradier.git
 cd EODOptionTradier
 
 # ───────────────────────────────────────────────
-# RUN BACKEND OPTIONS
+# VERIFY STATIC FILES EXIST (NEW STRUCTURE)
+# ───────────────────────────────────────────────
+test -f static/options.js  || echo "MISSING: static/options.js"
+test -f static/options.css || echo "MISSING: static/options.css"
+test -f static/storage.js  || echo "MISSING: static/storage.js"
+test -f static/storage.css || echo "MISSING: static/storage.css"
+
+# ───────────────────────────────────────────────
+# RUN BACKEND OPTIONS (INGEST)
 # ───────────────────────────────────────────────
 source ~/options_eod_backend/.venv/bin/activate
-python backendOptions
+python backendOptions || true
 
 # ───────────────────────────────────────────────
 # RUN BACKEND STORAGE SNAPSHOT (ONCE)
 # ───────────────────────────────────────────────
 export ROOT_MOUNT_PATH="/"
 export VOLUME_MOUNT_PATH="/mnt/volume-nyc3-01"
-python backendStorage snapshot
+python backendStorage snapshot || true
 
 # ───────────────────────────────────────────────
-# FRONTEND OPTIONS
+# FRONTEND (SINGLE APP on :8000 serving / and /storage)
 # ───────────────────────────────────────────────
 pkill -f "python frontendOptions" >/dev/null 2>&1 || true
 
 nohup "$HOME/options_eod_backend/.venv/bin/python" frontendOptions \
-  > frontendOptions.log 2>&1 &
-
-# ───────────────────────────────────────────────
-# FRONTEND STORAGE
-# ───────────────────────────────────────────────
-pkill -f "python frontendStorage" >/dev/null 2>&1 || true
-
-nohup "$HOME/options_eod_backend/.venv/bin/python" frontendStorage \
-  > frontendStorage.log 2>&1 &
+  > "$HOME/options_eod_backend/EODOptionTradier/frontendOptions.log" 2>&1 &
 
 # ───────────────────────────────────────────────
 # OPEN PORTS IF UFW IS ENABLED
 # ───────────────────────────────────────────────
 if command -v ufw >/dev/null 2>&1; then
   sudo ufw allow 8000/tcp || true
-  sudo ufw allow 8001/tcp || true
 fi
 
-echo "Options Frontend: http://$(curl -s ifconfig.me):8000"
-echo "Storage Frontend: http://$(curl -s ifconfig.me):8001"
-
+IP="$(curl -s ifconfig.me)"
+echo "Options Frontend:  http://$IP:8000"
+echo "Storage Dashboard: http://$IP:8000/storage"
 
 
