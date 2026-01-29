@@ -123,7 +123,7 @@ export PG_DSN="postgresql+psycopg2://options_ingest@localhost:5432/options_eod"
 export ROOT_MOUNT_PATH="/"
 export VOLUME_MOUNT_PATH="/mnt/volume-nyc3-01"
 
-python backend snapshot
+python backendStorage snapshot
 SH
 
 chmod +x ~/options_eod_backend/EODOptionTradier/run_disk_snapshot.sh
@@ -135,7 +135,7 @@ CRON_LINE="0 19 * * 1-5 $HOME/options_eod_backend/EODOptionTradier/run_disk_snap
 # MANUAL: RUN BACKEND ONCE (CREATES TABLE VIA ensure_schema)
 # ───────────────────────────────────────────────
 source ~/options_eod_backend/.venv/bin/activate
-python backend
+python backendOptions
 
 # ───────────────────────────────────────────────
 # OPTIONAL: MANUAL TEST DISK SNAPSHOT ONCE RIGHT NOW
@@ -144,20 +144,30 @@ python backend
 tail -n 50 ~/options_eod_backend/EODOptionTradier/disk_snapshot.log || true
 
 # ───────────────────────────────────────────────
-# FRONTEND: KILL OLD THEN START NEW
+# FRONTEND OPTIONS: KILL OLD THEN START NEW
 # ───────────────────────────────────────────────
-pkill -f "python frontend" >/dev/null 2>&1 || true
+pkill -f "python frontendOptions" >/dev/null 2>&1 || true
 
-nohup "$HOME/options_eod_backend/.venv/bin/python" frontend \
-  > frontend.log 2>&1 &
+nohup "$HOME/options_eod_backend/.venv/bin/python" frontendOptions \
+  > frontendOptions.log 2>&1 &
 
 # ───────────────────────────────────────────────
-# OPEN PORT 8000 IF UFW IS ENABLED
+# FRONTEND STORAGE: KILL OLD THEN START NEW
+# ───────────────────────────────────────────────
+pkill -f "python frontendStorage" >/dev/null 2>&1 || true
+
+nohup "$HOME/options_eod_backend/.venv/bin/python" frontendStorage \
+  > frontendStorage.log 2>&1 &
+
+# ───────────────────────────────────────────────
+# OPEN PORTS IF UFW IS ENABLED
 # ───────────────────────────────────────────────
 if command -v ufw >/dev/null 2>&1; then
   sudo ufw allow 8000/tcp || true
+  sudo ufw allow 8001/tcp || true
 fi
 
-echo "Frontend: http://$(curl -s ifconfig.me):8000"
+echo "Options Frontend: http://$(curl -s ifconfig.me):8000"
+echo "Storage Frontend: http://$(curl -s ifconfig.me):8001"
 
 
