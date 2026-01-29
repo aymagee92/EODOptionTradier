@@ -1,7 +1,7 @@
 # =========================================================
 # TROUBLESHOOT SETUP – MANUAL RUN (NO CRON)
-# Goal: create DB + table, run backend manually, then run frontend
-# Includes: verify DB exists AFTER Postgres data_directory move
+# Goal: create DB + table, run backend immediately,
+#       run storage snapshot once, then run frontends
 # =========================================================
 
 # ───────────────────────────────────────────────
@@ -15,10 +15,9 @@ sudo apt update && sudo apt upgrade -y
 sudo timedatectl set-timezone America/New_York
 
 # ───────────────────────────────────────────────
-# PYTHON + ESSENTIALS + POSTGRES + CRON
+# PYTHON + ESSENTIALS + POSTGRES
 # ───────────────────────────────────────────────
-sudo apt install -y python3 python3-pip python3-venv build-essential git postgresql postgresql-contrib cron
-sudo systemctl enable --now cron
+sudo apt install -y python3 python3-pip python3-venv build-essential git postgresql postgresql-contrib
 
 # ───────────────────────────────────────────────
 # PROJECT DIRECTORY + VIRTUAL ENV
@@ -62,12 +61,11 @@ sudo sed -i "s|^#\?listen_addresses =.*|listen_addresses = 'localhost'|" \
 sudo systemctl start postgresql
 
 # ───────────────────────────────────────────────
-# CREATE ROLE + VERIFY/CREATE DATABASE (POST-MOVE)
+# CREATE ROLE + VERIFY/CREATE DATABASE
 # ───────────────────────────────────────────────
 DB_NAME="options_eod"
 DB_USER="options_ingest"
 
-# Ensure role exists
 sudo -u postgres psql <<SQL
 DO \$\$
 BEGIN
@@ -78,7 +76,6 @@ END
 \$\$;
 SQL
 
-# Verify DB exists in the CURRENT running cluster; create if missing
 sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 \
   || sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
 
@@ -86,20 +83,21 @@ sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'
 # ALLOW PASSWORDLESS LOCAL ACCESS
 # ───────────────────────────────────────────────
 PG_HBA="/etc/postgresql/${PG_VER}/main/pg_hba.conf"
-sudo sed -i "1ilocal ${DB_NAME} ${DB_USER} trust" "${PG_HBA}"
-sudo sed -i "2ihost ${DB_NAME} ${DB_USER} 127.0.0.1/32 trust" "${PG_HBA}"
-sudo sed -i "3ihost ${DB_NAME} ${DB_USER} ::1/128 trust" "${PG_HBA}"
+
+grep -qxF "local ${DB_NAME} ${DB_USER} trust" "$PG_HBA" || echo "local ${DB_NAME} ${DB_USER} trust" | sudo tee -a "$PG_HBA" >/dev/null
+grep -qxF "host ${DB_NAME} ${DB_USER} 127.0.0.1/32 trust" "$PG_HBA" || echo "host ${DB_NAME} ${DB_USER} 127.0.0.1/32 trust" | sudo tee -a "$PG_HBA" >/dev/null
+grep -qxF "host ${DB_NAME} ${DB_USER} ::1/128 trust" "$PG_HBA" || echo "host ${DB_NAME} ${DB_USER} ::1/128 trust" | sudo tee -a "$PG_HBA" >/dev/null
+
 sudo systemctl reload postgresql
 
 # ───────────────────────────────────────────────
 # ENVIRONMENT VARIABLES
 # ───────────────────────────────────────────────
 export PG_DSN="postgresql+psycopg2://options_ingest@localhost:5432/options_eod"
-export TRADIER_ACCESS_TOKEN="OUOFRjuCoP5C3uSBni56tOdaUhOG"
+export TRADIER_ACCESS_TOKEN="REDACTED"
 
 # ───────────────────────────────────────────────
 # CLONE (FRESH)
-# NOTE: this overwrites local edits. Remove rm -rf/git clone if you edited files locally.
 # ───────────────────────────────────────────────
 cd ~/options_eod_backend
 rm -rf EODOptionTradier
@@ -107,44 +105,20 @@ git clone https://github.com/aymagee92/EODOptionTradier.git
 cd EODOptionTradier
 
 # ───────────────────────────────────────────────
-# CRON: DAILY DISK SNAPSHOT (WEEKDAYS ONLY @ 7:00pm ET)
-# - Best practice: install cron for the current user (this is independent of venv)
-# - Cron does NOT inherit your shell env vars, so we use a wrapper script that sets them.
-# ───────────────────────────────────────────────
-cat > ~/options_eod_backend/EODOptionTradier/run_disk_snapshot.sh <<'SH'
-#!/usr/bin/env bash
-set -euo pipefail
-
-cd "$HOME/options_eod_backend/EODOptionTradier"
-source "$HOME/options_eod_backend/.venv/bin/activate"
-
-# cron won't have your interactive shell env vars; set what snapshot needs
-export PG_DSN="postgresql+psycopg2://options_ingest@localhost:5432/options_eod"
-export ROOT_MOUNT_PATH="/"
-export VOLUME_MOUNT_PATH="/mnt/volume-nyc3-01"
-
-python backendStorage snapshot
-SH
-
-chmod +x ~/options_eod_backend/EODOptionTradier/run_disk_snapshot.sh
-
-CRON_LINE="0 19 * * 1-5 $HOME/options_eod_backend/EODOptionTradier/run_disk_snapshot.sh >> $HOME/options_eod_backend/EODOptionTradier/disk_snapshot.log 2>&1"
-( crontab -l 2>/dev/null | grep -v "run_disk_snapshot.sh" ; echo "$CRON_LINE" ) | crontab -
-
-# ───────────────────────────────────────────────
-# MANUAL: RUN BACKEND ONCE (CREATES TABLE VIA ensure_schema)
+# RUN BACKEND OPTIONS (CREATES TABLE + INGESTS DATA)
 # ───────────────────────────────────────────────
 source ~/options_eod_backend/.venv/bin/activate
 python backendOptions
 
 # ───────────────────────────────────────────────
-# OPTIONAL: MANUAL TEST DISK SNAPSHOT ONCE RIGHT NOW
+# RUN BACKEND STORAGE SNAPSHOT (ONCE)
 # ───────────────────────────────────────────────
-~/options_eod_backend/EODOptionTradier/run_disk_snapshot.sh
-tail -n 50 ~/options_eod_backend/EODOptionTradier/disk_snapshot.log || true
+export ROOT_MOUNT_PATH="/"
+export VOLUME_MOUNT_PATH="/mnt/volume-nyc3-01"
+python backendStorage snapshot
 
 # ───────────────────────────────────────────────
-# FRONTEND OPTIONS: KILL OLD THEN START NEW
+# FRONTEND OPTIONS
 # ───────────────────────────────────────────────
 pkill -f "python frontendOptions" >/dev/null 2>&1 || true
 
@@ -152,7 +126,7 @@ nohup "$HOME/options_eod_backend/.venv/bin/python" frontendOptions \
   > frontendOptions.log 2>&1 &
 
 # ───────────────────────────────────────────────
-# FRONTEND STORAGE: KILL OLD THEN START NEW
+# FRONTEND STORAGE
 # ───────────────────────────────────────────────
 pkill -f "python frontendStorage" >/dev/null 2>&1 || true
 
