@@ -1,10 +1,29 @@
 # ============================
 # FILE 1: frontendStorage
-# (put this in repo root next to frontendOptions)
 # ============================
 
-from flask import render_template_string
+from flask import render_template_string, url_for
 from sqlalchemy import text
+
+HEADER_HTML = r"""
+<div class="header">
+  <div class="title">
+    <h1>Storage Usage Over Time</h1>
+    <div class="topnav">
+      <a class="tab" href="/">Option Info</a>
+      <a class="tab active" href="{{ url_for('storage_dashboard') }}">Storage Graph</a>
+    </div>
+    <div class="sub">
+      Tracks daily disk usage snapshots (root + volume) from
+      <code>disk_usage_daily</code>.
+    </div>
+  </div>
+
+  <div class="pill">
+    Latest snapshot: <code>{{ latest_date or "—" }}</code>
+  </div>
+</div>
+"""
 
 STORAGE_PAGE = r"""
 <!doctype html>
@@ -14,21 +33,12 @@ STORAGE_PAGE = r"""
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Storage Usage Over Time</title>
 
-  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-
-  <!-- ✅ External CSS -->
   <link rel="stylesheet" href="{{ url_for('static', filename='storage.css') }}">
 </head>
 <body>
   <div class="container">
-    <div class="header">
-      <div>
-        <h1>Storage Usage Over Time</h1>
-        <div class="sub">Tracks daily disk usage snapshots (root + volume) from <code>disk_usage_daily</code>.</div>
-      </div>
-      <div class="pill">Latest snapshot: <code>{{ latest_date or "—" }}</code></div>
-    </div>
+    """ + HEADER_HTML + r"""
 
     <div class="card">
       <div class="row">
@@ -72,7 +82,6 @@ STORAGE_PAGE = r"""
     </div>
   </div>
 
-  <!-- ✅ External JS (reads window.STORAGE_* globals) -->
   <script>
     window.STORAGE_LABELS = {{ labels | tojson }};
     window.STORAGE_ROOT_PCT = {{ root_pct | tojson }};
