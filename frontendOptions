@@ -5,8 +5,13 @@ import csv
 import io
 from decimal import Decimal
 
+from frontendStorage import register_storage_routes
+
 app = Flask(__name__, static_folder="static")
 engine = create_engine(os.environ["PG_DSN"], pool_pre_ping=True)
+
+# Register /storage route from frontendStorage (same port, same app)
+register_storage_routes(app, engine)
 
 TABLE = "option_chain_eod"
 
@@ -42,9 +47,6 @@ def fmt(v):
     return str(v)
 
 
-# -----------------------------
-# Disk helpers
-# -----------------------------
 def _empty_disk():
     return {
         "root_used": None,
@@ -91,202 +93,196 @@ def get_latest_disk_status():
         return _empty_disk()
 
 
-# -----------------------------
-# Shared header
-# -----------------------------
 HEADER_HTML = """
 <div class="header">
   <div class="title">
     <h1>End of Day Option Prices</h1>
     <div class="topnav">
       <a class="tab {% if active_page=='options' %}active{% endif %}" href="{{ url_for('index') }}">Option Info</a>
-      <a class="tab {% if active_page=='storage' %}active{% endif %}" href="{{ url_for('storage_graph') }}">Storage Graph</a>
+      <a class="tab {% if active_page=='storage' %}active{% endif %}" href="{{ url_for('storage_dashboard') }}">Storage Graph</a>
       <span class="badge">Click a column name to sort</span>
     </div>
   </div>
 
   <div class="storage">
-    <span class="pill"><b>Root</b>
-      <code>{{ disk.root_used or "—" }}</code> /
-      <code>{{ disk.root_total or "—" }}</code>
-      ({{ disk.root_pct or "—" }})
-    </span>
-    <span class="pill"><b>Volume</b>
-      <code>{{ disk.vol_used or "—" }}</code> /
-      <code>{{ disk.vol_total or "—" }}</code>
-      ({{ disk.vol_pct or "—" }})
-    </span>
+    <span class="pill"><b>Root</b> <code>{{ disk.root_used or "—" }}</code> / <code>{{ disk.root_total or "—" }}</code> ({{ disk.root_pct or "—" }})</span>
+    <span class="pill"><b>Volume</b> <code>{{ disk.vol_used or "—" }}</code> / <code>{{ disk.vol_total or "—" }}</code> ({{ disk.vol_pct or "—" }})</span>
   </div>
 </div>
 """
 
-
-# -----------------------------
-# OPTIONS PAGE
-# -----------------------------
 TABLE_PAGE = """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Options</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='options.css') }}">
 </head>
 <body>
-<div class="container">
-  """ + HEADER_HTML + """
+  <div class="container">
+    """ + HEADER_HTML + """
 
-  <form method="get" class="card">
-    <div class="controls">
-      <div class="controls-left">
-        <span>Rows</span>
-        <input type="number" name="limit" value="{{ limit }}" min="1" max="50000">
-      </div>
-      <div class="controls-right">
-        <button class="btn primary" type="submit">Run</button>
-      </div>
-    </div>
+    <form id="qform" method="get" class="card">
+      <div class="controls">
+        <div class="controls-left">
+          <div class="field">
+            <span>Rows</span>
+            <input type="number" name="limit" value="{{ limit }}" min="1" max="50000" />
+          </div>
 
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            {% for col in columns %}
-              <th>{{ col }}</th>
-            {% endfor %}
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in rows %}
+          <button class="btn ghost" type="button" id="clearBtn" title="Clear filters & sorts">
+            ✕ Clear all
+          </button>
+
+          <button class="btn ghost" type="button" id="clearSortsBtn" title="Clear sorts only">
+            ↕ Clear sorts
+          </button>
+
+          <div class="small">Filters & sorts are applied via URL (GET).</div>
+        </div>
+
+        <div class="controls-right">
+          <button class="btn primary" type="submit" name="format" value="html">Run</button>
+          <button class="btn" type="submit" name="format" value="csv">Download CSV</button>
+        </div>
+      </div>
+
+      <div class="chips" id="chips">
+        {% for col in columns %}
+          {% if filters.get(col) %}
+            <span class="chip filter" data-kind="filter" data-col="{{ col }}">
+              Filter <b>{{ col }}</b>: {{ filters.get(col) }}
+              <span class="x" role="button" tabindex="0" title="Remove">×</span>
+            </span>
+          {% endif %}
+          {% if sorts.get(col) %}
+            <span class="chip sort" data-kind="sort" data-col="{{ col }}">
+              Sort <b>{{ col }}</b>: {{ '▲' if sorts.get(col)=='asc' else '▼' }}
+              <span class="x" role="button" tabindex="0" title="Remove">×</span>
+            </span>
+          {% endif %}
+        {% endfor %}
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
             <tr>
               {% for col in columns %}
-                <td>{{ fmt(row.get(col)) }}</td>
+                {% set s = sorts.get(col, '') %}
+                <th data-col="{{ col }}" data-sort="{{ s }}">
+                  <div class="th-top">
+                    <input type="text" name="f_{{ col }}" value="{{ filters.get(col,'') }}" placeholder="Filter…" />
+                  </div>
+
+                  <input type="hidden" name="s_{{ col }}" value="{{ s }}">
+
+                  <div class="th-bottom" data-action="sort" title="Click to sort">
+                    <span>{{ col }}</span>
+                    <span class="sort-ind">
+                      {% if s=='asc' %}▲{% elif s=='desc' %}▼{% else %}↕{% endif %}
+                    </span>
+                  </div>
+                </th>
               {% endfor %}
             </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </form>
-</div>
+          </thead>
 
-<script src="{{ url_for('static', filename='options.js') }}"></script>
-</body>
-</html>
-"""
+          <tbody>
+            {% for row in rows %}
+              <tr>
+                {% for col in columns %}
+                  <td class="{% if col in ['symbol'] %}mono{% endif %}">
+                    {{ fmt(row.get(col)) }}
+                  </td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
 
-
-# -----------------------------
-# STORAGE PAGE (merged frontendStorage)
-# -----------------------------
-STORAGE_PAGE = """
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <title>Storage</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-  <link rel="stylesheet" href="{{ url_for('static', filename='options.css') }}">
-</head>
-<body>
-<div class="container">
-  """ + HEADER_HTML + """
-
-  <div class="card">
-    {% if not points %}
-      <div class="empty">No storage snapshots yet.</div>
-    {% else %}
-      <canvas id="usageChart"></canvas>
-    {% endif %}
+      <div class="footer-note">
+        Showing {{ rows|length }} row(s). Scroll horizontally for more columns.
+      </div>
+    </form>
   </div>
-</div>
 
-{% if points %}
-<script>
-const labels = {{ labels | tojson }};
-const rootPct = {{ root_pct | tojson }};
-const volPct  = {{ vol_pct | tojson }};
-
-new Chart(document.getElementById('usageChart'), {
-  type: 'line',
-  data: {
-    labels,
-    datasets: [
-      { label: 'Root % Used', data: rootPct },
-      { label: 'Volume % Used', data: volPct }
-    ]
-  },
-  options: {
-    responsive: true,
-    scales: {
-      y: { beginAtZero: true, max: 100 }
-    }
-  }
-});
-</script>
-{% endif %}
+  <script src="{{ url_for('static', filename='options.js') }}"></script>
 </body>
 </html>
 """
 
-
-# -----------------------------
-# ROUTES
-# -----------------------------
-@app.route("/")
+@app.route("/", methods=["GET"])
 def index():
+    filters = {}
+    sorts = {}
+    where_clauses = []
+    params = {}
+
+    for col in COLUMNS:
+        fval = request.args.get(f"f_{col}")
+        sval = request.args.get(f"s_{col}")
+
+        if fval:
+            filters[col] = fval
+            where_clauses.append(f"{col}::text ILIKE :f_{col}")
+            params[f"f_{col}"] = f"%{fval}%"
+
+        if sval in ("asc", "desc"):
+            sorts[col] = sval
+
+    where_sql = ""
+    if where_clauses:
+        where_sql = "WHERE " + " AND ".join(where_clauses)
+
+    if sorts:
+        order_parts = [f"{col} {direction}" for col, direction in sorts.items()]
+        order_sql = "ORDER BY " + ", ".join(order_parts)
+    else:
+        order_sql = "ORDER BY quotedate DESC, symbol ASC, expiredate ASC, strike ASC"
+
     limit = int(request.args.get("limit", 100))
-    sql = f"SELECT {','.join(COLUMNS)} FROM {TABLE} ORDER BY quotedate DESC LIMIT :limit"
+    params["limit"] = limit
+
+    sql = f"""
+    SELECT {",".join(COLUMNS)}
+    FROM {TABLE}
+    {where_sql}
+    {order_sql}
+    LIMIT :limit
+    """
 
     with engine.connect() as conn:
-        rows = [dict(r._mapping) for r in conn.execute(text(sql), {"limit": limit})]
+        result = conn.execute(text(sql), params)
+        rows = [dict(r._mapping) for r in result]
+
+    if request.args.get("format") == "csv":
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=COLUMNS)
+        writer.writeheader()
+        writer.writerows(rows)
+        return Response(
+            output.getvalue(),
+            mimetype="text/csv",
+            headers={"Content-Disposition": "attachment; filename=options_export.csv"},
+        )
 
     return render_template_string(
         TABLE_PAGE,
+        active_page="options",
         rows=rows,
         columns=COLUMNS,
+        filters=filters,
+        sorts=sorts,
         limit=limit,
         fmt=fmt,
         disk=get_latest_disk_status(),
-        active_page="options",
     )
-
-
-@app.route("/storage")
-def storage_graph():
-    sql = """
-    SELECT captured_at::date d,
-           root_used_bytes, root_total_bytes,
-           vol_used_bytes, vol_total_bytes
-    FROM disk_usage_daily
-    ORDER BY d
-    """
-    with engine.connect() as conn:
-        rows = [dict(r._mapping) for r in conn.execute(text(sql))]
-
-    labels, root_pct, vol_pct, points = [], [], [], []
-
-    for r in rows:
-        labels.append(r["d"].isoformat())
-        root_pct.append(r["root_used_bytes"] / r["root_total_bytes"] * 100)
-        vol_pct.append(r["vol_used_bytes"] / r["vol_total_bytes"] * 100)
-        points.append(r)
-
-    return render_template_string(
-        STORAGE_PAGE,
-        labels=labels,
-        root_pct=root_pct,
-        vol_pct=vol_pct,
-        points=points,
-        disk=get_latest_disk_status(),
-        active_page="storage",
-    )
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
-
-
-
 
 
