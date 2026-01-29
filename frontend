@@ -54,53 +54,500 @@ def fmt(v):
 
 TEMPLATE = """
 <!doctype html>
-<title>Options DB</title>
-<h2>Database Table: {{ table }}</h2>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Options DB</title>
 
-<form method="get">
-<table border="1" cellpadding="4" cellspacing="0">
-  <tr>
-    {% for col in columns %}
-      <th>
-        {{ col }}<br>
-        <input type="text" name="f_{{ col }}" value="{{ filters.get(col,'') }}" size="10"><br>
-        <select name="s_{{ col }}">
-          <option value="">—</option>
-          <option value="asc" {% if sorts.get(col)=='asc' %}selected{% endif %}>▲</option>
-          <option value="desc" {% if sorts.get(col)=='desc' %}selected{% endif %}>▼</option>
-        </select>
-      </th>
-    {% endfor %}
-  </tr>
-</table>
+  <style>
+    :root{
+      --bg: #0b1020;
+      --card: rgba(255,255,255,.06);
+      --card2: rgba(255,255,255,.09);
+      --text: rgba(255,255,255,.92);
+      --muted: rgba(255,255,255,.68);
+      --border: rgba(255,255,255,.12);
+      --focus: rgba(99,102,241,.55);
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --radius: 16px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+    }
 
-<br>
-Rows:
-<input type="number" name="limit" value="{{ limit }}" min="1" max="50000">
+    * { box-sizing: border-box; }
+    body{
+      margin:0;
+      font-family: var(--sans);
+      color: var(--text);
+      background:
+        radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,.25), transparent 60%),
+        radial-gradient(900px 500px at 80% 10%, rgba(34,197,94,.18), transparent 60%),
+        linear-gradient(180deg, #070a14, var(--bg));
+      min-height: 100vh;
+    }
 
-<button type="submit" name="format" value="html">Run</button>
-<button type="submit" name="format" value="csv">Download CSV</button>
-</form>
+    .container{
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 28px 18px 36px;
+    }
 
-<hr>
+    .header{
+      display:flex;
+      flex-wrap:wrap;
+      align-items:flex-end;
+      justify-content:space-between;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
 
-<h3>Results</h3>
+    .title{
+      display:flex;
+      flex-direction:column;
+      gap: 6px;
+    }
 
-<table border="1" cellpadding="4" cellspacing="0">
-  <tr>
-    {% for col in columns %}
-      <th>{{ col }}</th>
-    {% endfor %}
-  </tr>
+    h1{
+      margin:0;
+      font-size: 20px;
+      letter-spacing: .2px;
+      font-weight: 700;
+    }
+    .subtitle{
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .badge{
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.08);
+      border: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .badge code{
+      font-family: var(--mono);
+      color: var(--text);
+      font-size: 12px;
+    }
 
-  {% for row in rows %}
-    <tr>
-      {% for col in columns %}
-        <td>{{ fmt(row.get(col)) }}</td>
-      {% endfor %}
-    </tr>
-  {% endfor %}
-</table>
+    .card{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .controls{
+      padding: 14px;
+      display:flex;
+      flex-wrap:wrap;
+      gap: 10px 12px;
+      align-items:center;
+      justify-content:space-between;
+    }
+
+    .controls-left{
+      display:flex;
+      flex-wrap:wrap;
+      gap: 10px 12px;
+      align-items:center;
+    }
+
+    .controls-right{
+      display:flex;
+      flex-wrap:wrap;
+      gap: 10px;
+      align-items:center;
+    }
+
+    .field{
+      display:flex;
+      gap: 8px;
+      align-items:center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    input[type="number"], input[type="text"], select{
+      height: 36px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,.18);
+      color: var(--text);
+      padding: 0 10px;
+      outline: none;
+      transition: box-shadow .15s, border-color .15s;
+      font-size: 13px;
+    }
+    input[type="text"]{
+      width: 100%;
+      min-width: 130px;
+    }
+    select{
+      padding-right: 28px;
+      cursor:pointer;
+    }
+    input:focus, select:focus{
+      border-color: rgba(99,102,241,.7);
+      box-shadow: 0 0 0 4px var(--focus);
+    }
+
+    .btn{
+      height: 36px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.10);
+      color: var(--text);
+      padding: 0 12px;
+      cursor:pointer;
+      font-weight: 600;
+      font-size: 13px;
+      transition: transform .06s ease, background .15s, border-color .15s;
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      user-select:none;
+    }
+    .btn:hover{ background: rgba(255,255,255,.14); }
+    .btn:active{ transform: translateY(1px); }
+
+    .btn.primary{
+      background: linear-gradient(135deg, rgba(124,58,237,.95), rgba(99,102,241,.95));
+      border-color: rgba(255,255,255,.18);
+    }
+    .btn.primary:hover{ filter: brightness(1.05); }
+
+    .btn.ghost{
+      background: transparent;
+    }
+
+    .chips{
+      padding: 0 14px 14px;
+      display:flex;
+      flex-wrap:wrap;
+      gap: 8px;
+    }
+    .chip{
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.06);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .chip b{ color: var(--text); font-weight: 700; }
+    .chip .x{
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,.18);
+      color: var(--muted);
+      cursor:pointer;
+      font-weight: 800;
+      line-height: 1;
+      user-select:none;
+    }
+    .chip .x:hover{
+      color: var(--text);
+      border-color: rgba(255,255,255,.22);
+    }
+
+    .table-wrap{
+      overflow:auto;
+      border-top: 1px solid var(--border);
+      border-radius: 0 0 var(--radius) var(--radius);
+    }
+
+    table{
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      min-width: 1200px;
+    }
+
+    thead th{
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      background: rgba(10, 14, 30, .92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--border);
+      text-align:left;
+      padding: 10px 10px;
+      vertical-align: bottom;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    thead th .th-top{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .th-name{
+      display:flex;
+      align-items:center;
+      gap: 8px;
+      cursor:pointer;
+      user-select:none;
+      color: rgba(255,255,255,.82);
+      font-weight: 700;
+      letter-spacing: .15px;
+    }
+
+    .sort-ind{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      width: 22px;
+      height: 22px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,.06);
+      color: rgba(255,255,255,.78);
+      font-size: 11px;
+      font-weight: 800;
+      flex: 0 0 auto;
+    }
+
+    .filter-row{
+      display:flex;
+      gap: 6px;
+      align-items:center;
+    }
+    .filter-row select{
+      width: 72px;
+      min-width: 72px;
+      padding-left: 8px;
+      padding-right: 8px;
+    }
+
+    tbody td{
+      padding: 9px 10px;
+      border-bottom: 1px solid rgba(255,255,255,.06);
+      font-size: 13px;
+      color: rgba(255,255,255,.88);
+      white-space: nowrap;
+    }
+    tbody tr:nth-child(odd) td{
+      background: rgba(255,255,255,.02);
+    }
+    tbody tr:hover td{
+      background: rgba(124,58,237,.08);
+    }
+
+    .mono{ font-family: var(--mono); font-size: 12.5px; }
+
+    .footer-note{
+      padding: 10px 14px 14px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .topbar-actions{
+      display:flex;
+      gap: 8px;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
+
+    .small{
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .table-wrap::-webkit-scrollbar { height: 10px; width: 10px; }
+    .table-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 999px; }
+    .table-wrap::-webkit-scrollbar-track { background: rgba(255,255,255,.04); }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="title">
+        <h1>Options DB</h1>
+        <div class="subtitle">
+          Viewing table <span class="badge"><span>Table</span><code>{{ table }}</code></span>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        <span class="badge">Tip: click a column name to sort</span>
+      </div>
+    </div>
+
+    <form id="qform" method="get" class="card">
+      <div class="controls">
+        <div class="controls-left">
+          <div class="field">
+            <span>Rows</span>
+            <input type="number" name="limit" value="{{ limit }}" min="1" max="50000" />
+          </div>
+
+          <button class="btn ghost" type="button" id="clearBtn" title="Clear all filters/sorts">
+            ✕ Clear
+          </button>
+
+          <div class="small">Filters & sorts are applied via the URL (GET).</div>
+        </div>
+
+        <div class="controls-right">
+          <button class="btn primary" type="submit" name="format" value="html">Run</button>
+          <button class="btn" type="submit" name="format" value="csv">Download CSV</button>
+        </div>
+      </div>
+
+      <div class="chips" id="chips">
+        {% for col in columns %}
+          {% if filters.get(col) %}
+            <span class="chip" data-kind="filter" data-col="{{ col }}">
+              Filter <b>{{ col }}</b>: {{ filters.get(col) }}
+              <span class="x" role="button" tabindex="0" title="Remove">×</span>
+            </span>
+          {% endif %}
+          {% if sorts.get(col) %}
+            <span class="chip" data-kind="sort" data-col="{{ col }}">
+              Sort <b>{{ col }}</b>: {{ '▲' if sorts.get(col)=='asc' else '▼' }}
+              <span class="x" role="button" tabindex="0" title="Remove">×</span>
+            </span>
+          {% endif %}
+        {% endfor %}
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              {% for col in columns %}
+                {% set s = sorts.get(col, '') %}
+                <th data-col="{{ col }}" data-sort="{{ s }}">
+                  <div class="th-top">
+                    <div class="th-name" data-action="sort">
+                      <span>{{ col }}</span>
+                      <span class="sort-ind">
+                        {% if s=='asc' %}▲{% elif s=='desc' %}▼{% else %}↕{% endif %}
+                      </span>
+                    </div>
+                  </div>
+                  <div class="filter-row">
+                    <input type="text" name="f_{{ col }}" value="{{ filters.get(col,'') }}" placeholder="Filter…" />
+                    <select name="s_{{ col }}" aria-label="Sort {{ col }}">
+                      <option value="">—</option>
+                      <option value="asc" {% if s=='asc' %}selected{% endif %}>asc</option>
+                      <option value="desc" {% if s=='desc' %}selected{% endif %}>desc</option>
+                    </select>
+                  </div>
+                </th>
+              {% endfor %}
+            </tr>
+          </thead>
+
+          <tbody>
+            {% for row in rows %}
+              <tr>
+                {% for col in columns %}
+                  <td class="{% if col in ['callsymbol','putsymbol','symbol'] %}mono{% endif %}">
+                    {{ fmt(row.get(col)) }}
+                  </td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="footer-note">
+        Showing {{ rows|length }} row(s). Scroll horizontally for more columns.
+      </div>
+    </form>
+  </div>
+
+  <script>
+    (function(){
+      const form = document.getElementById('qform');
+
+      // Click header name to cycle sort: none -> asc -> desc -> none
+      document.querySelectorAll('th[data-col] .th-name[data-action="sort"]').forEach(el => {
+        el.addEventListener('click', (e) => {
+          const th = e.currentTarget.closest('th[data-col]');
+          const col = th.getAttribute('data-col');
+          const current = th.getAttribute('data-sort') || '';
+
+          const next = current === '' ? 'asc' : (current === 'asc' ? 'desc' : '');
+          // Update the select for this column
+          const sel = th.querySelector('select[name="s_' + col + '"]');
+          if (sel) sel.value = next;
+
+          // Force html view on header click (prevents accidental CSV if you last downloaded)
+          let hidden = form.querySelector('input[type="hidden"][name="format"]');
+          if (!hidden){
+            hidden = document.createElement('input');
+            hidden.type = 'hidden';
+            hidden.name = 'format';
+            form.appendChild(hidden);
+          }
+          hidden.value = 'html';
+
+          form.submit();
+        });
+      });
+
+      // Clear all filters/sorts (keeps limit)
+      document.getElementById('clearBtn').addEventListener('click', () => {
+        const limit = form.querySelector('input[name="limit"]')?.value || '100';
+        const url = new URL(window.location.href);
+        window.location.href = `${url.pathname}?limit=${encodeURIComponent(limit)}&format=html`;
+      });
+
+      // Chip remove handlers
+      document.querySelectorAll('.chip .x').forEach(x => {
+        x.addEventListener('click', (e) => {
+          const chip = e.currentTarget.closest('.chip');
+          const col = chip.getAttribute('data-col');
+          const kind = chip.getAttribute('data-kind');
+          if (!col || !kind) return;
+
+          if (kind === 'filter'){
+            const inp = form.querySelector('input[name="f_' + col + '"]');
+            if (inp) inp.value = '';
+          } else if (kind === 'sort'){
+            const sel = form.querySelector('select[name="s_' + col + '"]');
+            if (sel) sel.value = '';
+          }
+
+          // Force html view after chip removal
+          let hidden = form.querySelector('input[type="hidden"][name="format"]');
+          if (!hidden){
+            hidden = document.createElement('input');
+            hidden.type = 'hidden';
+            hidden.name = 'format';
+            form.appendChild(hidden);
+          }
+          hidden.value = 'html';
+
+          form.submit();
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
 """
 
 @app.route("/", methods=["GET"])
@@ -171,5 +618,6 @@ def index():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
+
 
 
