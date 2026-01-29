@@ -1,19 +1,24 @@
 /* ============================
-   FILE 2: static/storage.css
+   FILE: static/storage.css
+   (updated to support topnav tabs + pills like options page)
    ============================ */
 
 :root{
   --bg: #f6f7fb;
   --card: rgba(255,255,255,0.95);
+  --card2: rgba(255,255,255,0.98);
   --text: #0f172a;
   --muted: rgba(15,23,42,.65);
   --border: rgba(15,23,42,.10);
+  --focus: rgba(99,102,241,.30);
   --shadow: 0 10px 26px rgba(2,6,23,.08);
   --radius: 16px;
   --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
+
 *{ box-sizing:border-box; }
+
 body{
   margin:0;
   font-family: var(--sans);
@@ -24,30 +29,110 @@ body{
     linear-gradient(180deg, #ffffff, var(--bg));
   min-height:100vh;
 }
+
 .container{
   max-width: 1200px;
   margin: 0 auto;
   padding: 26px 18px 34px;
 }
+
+/* =========================
+   Header + Nav (from options)
+   ========================= */
+
 .header{
   display:flex;
   flex-wrap:wrap;
-  justify-content:space-between;
   align-items:flex-end;
-  gap: 10px;
+  justify-content:space-between;
+  gap: 14px;
   margin-bottom: 14px;
 }
+
+.title{
+  display:flex;
+  flex-direction:column;
+  gap: 8px;
+}
+
 h1{
   margin:0;
   font-size: 20px;
   font-weight: 800;
   letter-spacing: .2px;
 }
+
 .sub{
-  margin: 6px 0 0;
   color: var(--muted);
   font-size: 13px;
 }
+
+/* Top navigation tabs */
+.topnav{
+  display:flex;
+  gap: 8px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+
+.tab{
+  display:inline-flex;
+  align-items:center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.75);
+  color: rgba(15,23,42,.75);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  text-decoration: none;
+  user-select: none;
+}
+
+.tab:hover{
+  background: rgba(15,23,42,.04);
+}
+
+.tab.active{
+  background: linear-gradient(135deg, rgba(99,102,241,.95), rgba(124,58,237,.95));
+  border-color: rgba(99,102,241,.25);
+  color: #fff;
+}
+
+/* =========================
+   Pills (shared style)
+   ========================= */
+
+.pill{
+  display:inline-flex;
+  align-items:center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.75);
+  font-size: 12px;
+  color: rgba(15,23,42,.72);
+  white-space:nowrap;
+}
+
+.pill code{
+  font-family: var(--mono);
+  font-size: 12px;
+  color: rgba(15,23,42,.82);
+  background: rgba(15,23,42,.04);
+  border: 1px solid rgba(15,23,42,.06);
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+/* =========================
+   Card + chart
+   ========================= */
+
 .card{
   background: var(--card);
   border: 1px solid var(--border);
@@ -55,6 +140,7 @@ h1{
   box-shadow: var(--shadow);
   padding: 14px;
 }
+
 .row{
   display:flex;
   flex-wrap:wrap;
@@ -65,30 +151,19 @@ h1{
   align-items:center;
   justify-content:space-between;
 }
-.pill{
-  display:inline-flex;
-  align-items:center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: rgba(15,23,42,.04);
-  font-size: 12px;
-  color: var(--muted);
-  white-space:nowrap;
-}
-.pill code{
-  font-family: var(--mono);
-  color: var(--text);
-  background: rgba(255,255,255,.65);
-  border: 1px solid rgba(15,23,42,.08);
-  padding: 2px 6px;
-  border-radius: 999px;
-}
+
 .chart-wrap{
   height: 420px;
 }
-canvas{ width:100% !important; height:100% !important; }
+
+canvas{
+  width:100% !important;
+  height:100% !important;
+}
+
+/* =========================
+   Table
+   ========================= */
 
 table{
   width:100%;
@@ -96,17 +171,24 @@ table{
   margin-top: 14px;
   font-size: 13px;
 }
+
 th, td{
   padding: 8px 10px;
   border-bottom: 1px solid rgba(15,23,42,.08);
   text-align:left;
   white-space: nowrap;
 }
+
 th{
   color: var(--muted);
   font-weight: 800;
   font-size: 12px;
 }
+
+/* =========================
+   Empty state
+   ========================= */
+
 .empty{
   padding: 14px;
   border: 1px dashed rgba(15,23,42,.20);
