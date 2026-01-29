@@ -46,6 +46,70 @@ def fmt(v):
     return str(v)
 
 
+# ==============================
+# NEW: Disk status (latest snapshot)
+# ==============================
+def _empty_disk():
+    return {
+        "root_used": None,
+        "root_total": None,
+        "root_pct": None,
+        "vol_used": None,
+        "vol_total": None,
+        "vol_pct": None,
+    }
+
+
+def _bytes_to_gb(x: int) -> float:
+    return float(x) / (1024.0 ** 3)
+
+
+def get_latest_disk_status():
+    """
+    Reads the most recent disk usage snapshot from disk_usage_daily and formats:
+      used/total in GB and percent used
+    Returns a dict compatible with HEADER_HTML's `disk.*` references.
+    Safe if the table doesn't exist yet or has no rows.
+    """
+    sql = """
+    SELECT
+      root_used_bytes,
+      root_total_bytes,
+      vol_used_bytes,
+      vol_total_bytes
+    FROM disk_usage_daily
+    ORDER BY captured_at DESC
+    LIMIT 1
+    """
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text(sql)).fetchone()
+            if not row:
+                return _empty_disk()
+
+            root_used_b, root_total_b, vol_used_b, vol_total_b = map(int, row)
+
+            root_used_gb = _bytes_to_gb(root_used_b)
+            root_total_gb = _bytes_to_gb(root_total_b)
+            vol_used_gb = _bytes_to_gb(vol_used_b)
+            vol_total_gb = _bytes_to_gb(vol_total_b)
+
+            root_pct = (root_used_b / root_total_b * 100.0) if root_total_b else None
+            vol_pct = (vol_used_b / vol_total_b * 100.0) if vol_total_b else None
+
+            return {
+                "root_used": f"{root_used_gb:.2f} GB",
+                "root_total": f"{root_total_gb:.2f} GB",
+                "root_pct": f"{root_pct:.2f}%" if root_pct is not None else None,
+                "vol_used": f"{vol_used_gb:.2f} GB",
+                "vol_total": f"{vol_total_gb:.2f} GB",
+                "vol_pct": f"{vol_pct:.2f}%" if vol_pct is not None else None,
+            }
+    except Exception:
+        # If disk_usage_daily doesn't exist yet, or any other DB error, show placeholders
+        return _empty_disk()
+
+
 # ------------------------------
 # Shared layout bits
 # ------------------------------
@@ -608,7 +672,7 @@ TABLE_PAGE = f"""
       document.getElementById('clearBtn').addEventListener('click', () => {
         const limit = form.querySelector('input[name="limit"]')?.value || '100';
         const url = new URL(window.location.href);
-        window.location.href = `${{url.pathname}}?limit=${{encodeURIComponent(limit)}}&format=html`;
+        window.location.href = `${url.pathname}?limit=${encodeURIComponent(limit)}&format=html`;
       });
 
       // Clear sorts only (keeps filters + limit)
@@ -804,15 +868,8 @@ def index():
             headers={"Content-Disposition": "attachment; filename=options_export.csv"},
         )
 
-    # Disk hook placeholders (wired later)
-    disk = {
-        "root_used": None,
-        "root_total": None,
-        "root_pct": None,
-        "vol_used": None,
-        "vol_total": None,
-        "vol_pct": None,
-    }
+    # UPDATED: Fetch latest disk status
+    disk = get_latest_disk_status()
 
     return render_template_string(
         TABLE_PAGE,
@@ -829,15 +886,8 @@ def index():
 
 @app.route("/volume", methods=["GET"])
 def volume_graph():
-    # Disk hook placeholders (wired later)
-    disk = {
-        "root_used": None,
-        "root_total": None,
-        "root_pct": None,
-        "vol_used": None,
-        "vol_total": None,
-        "vol_pct": None,
-    }
+    # UPDATED: Fetch latest disk status
+    disk = get_latest_disk_status()
 
     return render_template_string(
         VOLUME_PAGE,
@@ -848,6 +898,7 @@ def volume_graph():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
+
 
 
 
