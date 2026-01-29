@@ -2,6 +2,9 @@
 import os
 import sys
 import logging
+import shutil
+import subprocess
+import json
 from datetime import datetime, timezone, date as date_type
 
 from sqlalchemy import create_engine, text
@@ -18,7 +21,133 @@ log = logging.getLogger("backendStorage")
 PG_DSN = os.environ["PG_DSN"]
 
 ROOT_MOUNT_PATH = os.environ.get("ROOT_MOUNT_PATH", "/")
-VOLUME_MOUNT_PATH = os.environ.get("VOLUME_MOUNT_PATH", "/mnt/volume-nyc3-01")
+
+# If set, we will use it. If not set, we will auto-detect at runtime.
+VOLUME_MOUNT_PATH = os.environ.get("VOLUME_MOUNT_PATH")
+
+
+# ----------------------------
+# VOLUME DETECTION (dynamic)
+# ----------------------------
+def _lsblk_detect_volume_mount() -> str | None:
+    """
+    Prefer lsblk JSON to find the largest mounted filesystem that isn't root/boot/tmpfs.
+    """
+    if shutil.which("lsblk") is None:
+        return None
+
+    try:
+        out = subprocess.check_output(
+            ["lsblk", "-J", "-b", "-o", "NAME,TYPE,SIZE,MOUNTPOINT"],
+            text=True,
+        )
+        data = json.loads(out)
+    except Exception:
+        return None
+
+    candidates: list[tuple[int, str]] = []
+
+    def walk(nodes):
+        for n in nodes or []:
+            mnt = n.get("mountpoint")
+            typ = n.get("type")
+            size = n.get("size")
+            children = n.get("children") or []
+
+            if mnt and typ in ("part", "lvm", "crypt", "disk"):
+                try:
+                    sz = int(size)
+                except Exception:
+                    sz = 0
+
+                bad_exact = {"/", "/boot", "/boot/efi"}
+                bad_prefixes = ("/run", "/dev", "/proc", "/sys")
+
+                if mnt in bad_exact:
+                    pass
+                elif any(mnt.startswith(p) for p in bad_prefixes):
+                    pass
+                else:
+                    candidates.append((sz, mnt))
+
+            if children:
+                walk(children)
+
+    walk(data.get("blockdevices") or [])
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
+
+
+def _df_detect_volume_mount() -> str | None:
+    """
+    Fallback: parse `df -B1` and choose the largest mounted filesystem that isn't root/boot/tmpfs.
+    """
+    if shutil.which("df") is None:
+        return None
+
+    try:
+        out = subprocess.check_output(["df", "-B1"], text=True)
+    except Exception:
+        return None
+
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return None
+
+    candidates: list[tuple[int, str]] = []
+
+    for ln in lines[1:]:
+        parts = ln.split()
+        if len(parts) < 6:
+            continue
+
+        fs, total_b, used_b, avail_b, usepct, mnt = parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
+
+        if fs.startswith(("tmpfs", "udev")):
+            continue
+        if mnt in ("/", "/boot", "/boot/efi"):
+            continue
+        if mnt.startswith(("/run", "/dev", "/proc", "/sys")):
+            continue
+
+        try:
+            tb = int(total_b)
+        except Exception:
+            continue
+
+        candidates.append((tb, mnt))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
+
+
+def detect_volume_mount() -> str:
+    """
+    Priority:
+      1) VOLUME_MOUNT_PATH env var if set
+      2) lsblk-based detection
+      3) df-based detection
+      4) fallback to "/" (last resort)
+    """
+    if VOLUME_MOUNT_PATH:
+        return VOLUME_MOUNT_PATH
+
+    mnt = _lsblk_detect_volume_mount()
+    if mnt:
+        return mnt
+
+    mnt = _df_detect_volume_mount()
+    if mnt:
+        return mnt
+
+    return "/"
 
 
 # ----------------------------
@@ -90,8 +219,11 @@ def record_snapshot(engine, captured_at: datetime | None = None):
 
     snap_day: date_type = captured_at.date()
 
+    # Dynamic volume mount detection (no hardcoding needed)
+    volume_path = detect_volume_mount()
+
     root_total, root_used = fs_usage_bytes(ROOT_MOUNT_PATH)
-    vol_total, vol_used = fs_usage_bytes(VOLUME_MOUNT_PATH)
+    vol_total, vol_used = fs_usage_bytes(volume_path)
 
     sql = """
     INSERT INTO disk_usage_daily (
@@ -117,7 +249,7 @@ def record_snapshot(engine, captured_at: datetime | None = None):
                 "captured_at": captured_at,
                 "snap_day": snap_day,
                 "root_path": ROOT_MOUNT_PATH,
-                "volume_path": VOLUME_MOUNT_PATH,
+                "volume_path": volume_path,
                 "root_total_bytes": root_total,
                 "root_used_bytes": root_used,
                 "vol_total_bytes": vol_total,
@@ -127,10 +259,11 @@ def record_snapshot(engine, captured_at: datetime | None = None):
 
     # Log BOTH GB + % (this matches your “show both” requirement)
     log.info(
-        "SNAPSHOT | day=%s | root %.2f/%.2f GB (%.2f%%) | vol %.2f/%.2f GB (%.2f%%)",
+        "SNAPSHOT | day=%s | root %.2f/%.2f GB (%.2f%%) | vol %.2f/%.2f GB (%.2f%%) | volume_path=%s",
         snap_day.isoformat(),
         bytes_to_gb(root_used), bytes_to_gb(root_total), pct_used(root_used, root_total),
         bytes_to_gb(vol_used),  bytes_to_gb(vol_total),  pct_used(vol_used, vol_total),
+        volume_path,
     )
 
 
@@ -160,3 +293,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
