@@ -98,9 +98,15 @@ HEADER_HTML = """
   <div class="title">
     <h1>End of Day Option Prices</h1>
     <div class="topnav">
-      <a class="tab {% if active_page=='options' %}active{% endif %}" href="{{ url_for('index') }}">Option Info</a>
-      <a class="tab {% if active_page=='storage' %}active{% endif %}" href="{{ url_for('storage_dashboard') }}">Storage Graph</a>
-      <span class="badge">Click a column name to sort</span>
+      <a class="tab {% if active_page=='options' %}active{% endif %}" href="{{ url_for('index') }}">
+        Option Info
+      </a>
+      <a class="tab {% if active_page=='storage' %}active{% endif %}" href="{{ url_for('storage_dashboard') }}">
+        Storage Graph
+      </a>
+      <a class="tab {% if active_page=='stockdata' %}active{% endif %}" href="/stockdata">
+        Stock Data
+      </a>
     </div>
   </div>
 
