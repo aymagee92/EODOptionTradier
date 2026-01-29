@@ -9,29 +9,33 @@ engine = create_engine(os.environ["PG_DSN"])
 
 TABLE = "option_chain_eod"
 
-# IMPORTANT: column names MUST be lowercase (Postgres folds identifiers)
+# Your requested display order (plus "all others" afterwards)
+# NOTE: DB columns are lowercase; we keep that and only change display order here.
 COLUMNS = [
     "symbol",
     "quotedate",
     "underlyinglast",
     "expiredate",
-    "strike",
-    "dte",
 
-    "callsymbol",
     "callvolume",
     "callbid",
     "callask",
     "callmid",
 
-    "putsymbol",
-    "putvolume",
+    "strike",
+
+    "putmid",
     "putbid",
     "putask",
-    "putmid",
+    "putvolume",
 
     "itmperccalls",
     "itmpercputs",
+
+    # all others afterwards
+    "dte",
+    "callsymbol",
+    "putsymbol",
 ]
 
 TEMPLATE = """
@@ -129,9 +133,6 @@ def index():
         result = conn.execute(text(sql), params)
         rows = [dict(r._mapping) for r in result]
 
-    # ─────────────────────────────
-    # CSV DOWNLOAD
-    # ─────────────────────────────
     if request.args.get("format") == "csv":
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=COLUMNS)
@@ -141,9 +142,7 @@ def index():
         return Response(
             output.getvalue(),
             mimetype="text/csv",
-            headers={
-                "Content-Disposition": "attachment; filename=options_export.csv"
-            },
+            headers={"Content-Disposition": "attachment; filename=options_export.csv"},
         )
 
     return render_template_string(
@@ -158,3 +157,4 @@ def index():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
+
