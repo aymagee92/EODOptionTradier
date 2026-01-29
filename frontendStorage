@@ -1,11 +1,12 @@
-import os
-from flask import Flask, render_template_string
-from sqlalchemy import create_engine, text
+# ============================
+# FILE 1: frontendStorage
+# (put this in repo root next to frontendOptions)
+# ============================
 
-app = Flask(__name__)
-engine = create_engine(os.environ["PG_DSN"], pool_pre_ping=True)
+from flask import render_template_string
+from sqlalchemy import text
 
-TEMPLATE = """
+STORAGE_PAGE = r"""
 <!doctype html>
 <html lang="en">
 <head>
@@ -13,123 +14,11 @@ TEMPLATE = """
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Storage Usage Over Time</title>
 
-  <!-- Chart.js for an easy line chart with axis labels -->
+  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 
-  <style>
-    :root{
-      --bg: #f6f7fb;
-      --card: rgba(255,255,255,0.95);
-      --text: #0f172a;
-      --muted: rgba(15,23,42,.65);
-      --border: rgba(15,23,42,.10);
-      --shadow: 0 10px 26px rgba(2,6,23,.08);
-      --radius: 16px;
-      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    }
-    *{ box-sizing:border-box; }
-    body{
-      margin:0;
-      font-family: var(--sans);
-      color: var(--text);
-      background:
-        radial-gradient(900px 500px at 20% 0%, rgba(99,102,241,.18), transparent 60%),
-        radial-gradient(900px 500px at 80% 10%, rgba(34,197,94,.14), transparent 60%),
-        linear-gradient(180deg, #ffffff, var(--bg));
-      min-height:100vh;
-    }
-    .container{
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 26px 18px 34px;
-    }
-    .header{
-      display:flex;
-      flex-wrap:wrap;
-      justify-content:space-between;
-      align-items:flex-end;
-      gap: 10px;
-      margin-bottom: 14px;
-    }
-    h1{
-      margin:0;
-      font-size: 20px;
-      font-weight: 800;
-      letter-spacing: .2px;
-    }
-    .sub{
-      margin: 6px 0 0;
-      color: var(--muted);
-      font-size: 13px;
-    }
-    .card{
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      padding: 14px;
-    }
-    .row{
-      display:flex;
-      flex-wrap:wrap;
-      gap: 10px;
-      margin-bottom: 10px;
-      color: var(--muted);
-      font-size: 13px;
-      align-items:center;
-      justify-content:space-between;
-    }
-    .pill{
-      display:inline-flex;
-      align-items:center;
-      gap: 8px;
-      padding: 6px 10px;
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      background: rgba(15,23,42,.04);
-      font-size: 12px;
-      color: var(--muted);
-      white-space:nowrap;
-    }
-    .pill code{
-      font-family: var(--mono);
-      color: var(--text);
-      background: rgba(255,255,255,.65);
-      border: 1px solid rgba(15,23,42,.08);
-      padding: 2px 6px;
-      border-radius: 999px;
-    }
-    .chart-wrap{
-      height: 420px;
-    }
-    canvas{ width:100% !important; height:100% !important; }
-
-    table{
-      width:100%;
-      border-collapse: collapse;
-      margin-top: 14px;
-      font-size: 13px;
-    }
-    th, td{
-      padding: 8px 10px;
-      border-bottom: 1px solid rgba(15,23,42,.08);
-      text-align:left;
-      white-space: nowrap;
-    }
-    th{
-      color: var(--muted);
-      font-weight: 800;
-      font-size: 12px;
-    }
-    .empty{
-      padding: 14px;
-      border: 1px dashed rgba(15,23,42,.20);
-      border-radius: 12px;
-      color: var(--muted);
-      background: rgba(255,255,255,.65);
-    }
-  </style>
+  <!-- ✅ External CSS -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='storage.css') }}">
 </head>
 <body>
   <div class="container">
@@ -150,7 +39,7 @@ TEMPLATE = """
       {% if not points %}
         <div class="empty">
           No rows found in <code>disk_usage_daily</code> yet.
-          Once your cron runs at 7:00pm on a weekday, refresh this page.
+          Once your snapshot runs, refresh this page.
         </div>
       {% else %}
         <div class="chart-wrap">
@@ -183,68 +72,13 @@ TEMPLATE = """
     </div>
   </div>
 
-  {% if points %}
+  <!-- ✅ External JS (reads window.STORAGE_* globals) -->
   <script>
-    const labels = {{ labels | tojson }};
-    const rootPct = {{ root_pct | tojson }};
-    const volPct  = {{ vol_pct  | tojson }};
-
-    const ctx = document.getElementById('usageChart');
-
-    new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels,
-        datasets: [
-          {
-            label: 'Root % Used',
-            data: rootPct,
-            borderWidth: 2,
-            pointRadius: 3,
-            tension: 0.25,
-          },
-          {
-            label: 'Volume % Used',
-            data: volPct,
-            borderWidth: 2,
-            pointRadius: 3,
-            tension: 0.25,
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: 'nearest', intersect: false },
-        plugins: {
-          legend: { display: true },
-          tooltip: {
-            callbacks: {
-              label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(2)}%`
-            }
-          }
-        },
-        scales: {
-          x: {
-            title: {
-              display: true,
-              text: 'Date'
-            },
-            ticks: { maxRotation: 0 }
-          },
-          y: {
-            title: {
-              display: true,
-              text: 'Percent Used (%)'
-            },
-            beginAtZero: true,
-            suggestedMax: 100
-          }
-        }
-      }
-    });
+    window.STORAGE_LABELS = {{ labels | tojson }};
+    window.STORAGE_ROOT_PCT = {{ root_pct | tojson }};
+    window.STORAGE_VOL_PCT  = {{ vol_pct  | tojson }};
   </script>
-  {% endif %}
+  <script src="{{ url_for('static', filename='storage.js') }}"></script>
 </body>
 </html>
 """
@@ -252,61 +86,58 @@ TEMPLATE = """
 def _bytes_to_gb(x: int) -> float:
     return float(x) / (1024.0 ** 3)
 
-@app.route("/", methods=["GET"])
-def storage_dashboard():
-    sql = """
-    SELECT
-      captured_at::date AS d,
-      root_total_bytes,
-      root_used_bytes,
-      vol_total_bytes,
-      vol_used_bytes
-    FROM disk_usage_daily
-    ORDER BY captured_at::date ASC
-    """
-    with engine.connect() as conn:
-        rows = [dict(r._mapping) for r in conn.execute(text(sql))]
+def register_storage_routes(app, engine):
+    @app.route("/storage", methods=["GET"])
+    def storage_dashboard():
+        sql = """
+        SELECT
+          captured_at::date AS d,
+          root_total_bytes,
+          root_used_bytes,
+          vol_total_bytes,
+          vol_used_bytes
+        FROM disk_usage_daily
+        ORDER BY captured_at::date ASC
+        """
+        with engine.connect() as conn:
+            rows = [dict(r._mapping) for r in conn.execute(text(sql))]
 
-    points = []
-    labels = []
-    root_pct = []
-    vol_pct = []
+        points = []
+        labels = []
+        root_pct = []
+        vol_pct = []
 
-    for r in rows:
-        d = r["d"].isoformat()
-        rt = int(r["root_total_bytes"])
-        ru = int(r["root_used_bytes"])
-        vt = int(r["vol_total_bytes"])
-        vu = int(r["vol_used_bytes"])
+        for r in rows:
+            d = r["d"].isoformat()
+            rt = int(r["root_total_bytes"])
+            ru = int(r["root_used_bytes"])
+            vt = int(r["vol_total_bytes"])
+            vu = int(r["vol_used_bytes"])
 
-        rp = (ru / rt * 100.0) if rt else 0.0
-        vp = (vu / vt * 100.0) if vt else 0.0
+            rp = (ru / rt * 100.0) if rt else 0.0
+            vp = (vu / vt * 100.0) if vt else 0.0
 
-        labels.append(d)
-        root_pct.append(round(rp, 4))
-        vol_pct.append(round(vp, 4))
+            labels.append(d)
+            root_pct.append(round(rp, 4))
+            vol_pct.append(round(vp, 4))
 
-        points.append({
-            "date": d,
-            "root_pct": rp,
-            "root_used_gb": _bytes_to_gb(ru),
-            "root_total_gb": _bytes_to_gb(rt),
-            "vol_pct": vp,
-            "vol_used_gb": _bytes_to_gb(vu),
-            "vol_total_gb": _bytes_to_gb(vt),
-        })
+            points.append({
+                "date": d,
+                "root_pct": rp,
+                "root_used_gb": _bytes_to_gb(ru),
+                "root_total_gb": _bytes_to_gb(rt),
+                "vol_pct": vp,
+                "vol_used_gb": _bytes_to_gb(vu),
+                "vol_total_gb": _bytes_to_gb(vt),
+            })
 
-    latest_date = labels[-1] if labels else None
+        latest_date = labels[-1] if labels else None
 
-    return render_template_string(
-        TEMPLATE,
-        points=points,
-        labels=labels,
-        root_pct=root_pct,
-        vol_pct=vol_pct,
-        latest_date=latest_date,
-    )
-
-if __name__ == "__main__":
-    # Run separate from your options frontend to avoid port collisions
-    app.run(host="0.0.0.0", port=8001)
+        return render_template_string(
+            STORAGE_PAGE,
+            points=points,
+            labels=labels,
+            root_pct=root_pct,
+            vol_pct=vol_pct,
+            latest_date=latest_date,
+        )
