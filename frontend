@@ -10,7 +10,7 @@ engine = create_engine(os.environ["PG_DSN"])
 
 TABLE = "option_chain_eod"
 
-# Your requested display order
+# Display order (callsymbol/putsymbol excluded per request)
 COLUMNS = [
     "symbol",
     "quotedate",
@@ -32,10 +32,7 @@ COLUMNS = [
     "itmperccalls",
     "itmpercputs",
 
-    # all others afterwards
     "dte",
-    "callsymbol",
-    "putsymbol",
 ]
 
 def fmt(v):
@@ -62,17 +59,19 @@ TEMPLATE = """
 
   <style>
     :root{
-      --bg: #0b1020;
-      --card: rgba(255,255,255,.06);
-      --card2: rgba(255,255,255,.09);
-      --text: rgba(255,255,255,.92);
-      --muted: rgba(255,255,255,.68);
-      --border: rgba(255,255,255,.12);
-      --focus: rgba(99,102,241,.55);
-      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --bg: #f6f7fb;
+      --card: rgba(255,255,255,0.9);
+      --card2: rgba(255,255,255,0.98);
+      --text: #0f172a;
+      --muted: rgba(15,23,42,.65);
+      --border: rgba(15,23,42,.10);
+      --focus: rgba(99,102,241,.30);
+      --shadow: 0 10px 26px rgba(2,6,23,.08);
       --radius: 16px;
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+      --accent: rgba(99,102,241,.15);
+      --accent2: rgba(34,197,94,.18);
     }
 
     * { box-sizing: border-box; }
@@ -81,16 +80,16 @@ TEMPLATE = """
       font-family: var(--sans);
       color: var(--text);
       background:
-        radial-gradient(900px 500px at 20% 0%, rgba(124,58,237,.25), transparent 60%),
-        radial-gradient(900px 500px at 80% 10%, rgba(34,197,94,.18), transparent 60%),
-        linear-gradient(180deg, #070a14, var(--bg));
+        radial-gradient(900px 500px at 20% 0%, rgba(99,102,241,.18), transparent 60%),
+        radial-gradient(900px 500px at 80% 10%, rgba(34,197,94,.14), transparent 60%),
+        linear-gradient(180deg, #ffffff, var(--bg));
       min-height: 100vh;
     }
 
     .container{
-      max-width: 1400px;
+      max-width: 1500px;
       margin: 0 auto;
-      padding: 28px 18px 36px;
+      padding: 26px 18px 34px;
     }
 
     .header{
@@ -99,7 +98,7 @@ TEMPLATE = """
       align-items:flex-end;
       justify-content:space-between;
       gap: 14px;
-      margin-bottom: 16px;
+      margin-bottom: 14px;
     }
 
     .title{
@@ -112,7 +111,7 @@ TEMPLATE = """
       margin:0;
       font-size: 20px;
       letter-spacing: .2px;
-      font-weight: 700;
+      font-weight: 800;
     }
     .subtitle{
       color: var(--muted);
@@ -124,7 +123,7 @@ TEMPLATE = """
       gap: 8px;
       padding: 6px 10px;
       border-radius: 999px;
-      background: rgba(255,255,255,.08);
+      background: rgba(15,23,42,.04);
       border: 1px solid var(--border);
       font-size: 12px;
       color: var(--muted);
@@ -140,6 +139,7 @@ TEMPLATE = """
       border: 1px solid var(--border);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
+      overflow: hidden;
     }
 
     .controls{
@@ -149,6 +149,8 @@ TEMPLATE = """
       gap: 10px 12px;
       align-items:center;
       justify-content:space-between;
+      background: var(--card2);
+      border-bottom: 1px solid var(--border);
     }
 
     .controls-left{
@@ -172,11 +174,12 @@ TEMPLATE = """
       color: var(--muted);
       font-size: 13px;
     }
-    input[type="number"], input[type="text"], select{
+
+    input[type="number"], input[type="text"]{
       height: 36px;
       border-radius: 10px;
       border: 1px solid var(--border);
-      background: rgba(0,0,0,.18);
+      background: rgba(255,255,255,.95);
       color: var(--text);
       padding: 0 10px;
       outline: none;
@@ -187,12 +190,9 @@ TEMPLATE = """
       width: 100%;
       min-width: 130px;
     }
-    select{
-      padding-right: 28px;
-      cursor:pointer;
-    }
-    input:focus, select:focus{
-      border-color: rgba(99,102,241,.7);
+
+    input:focus{
+      border-color: rgba(99,102,241,.55);
       box-shadow: 0 0 0 4px var(--focus);
     }
 
@@ -200,11 +200,11 @@ TEMPLATE = """
       height: 36px;
       border-radius: 10px;
       border: 1px solid var(--border);
-      background: rgba(255,255,255,.10);
+      background: rgba(15,23,42,.04);
       color: var(--text);
       padding: 0 12px;
       cursor:pointer;
-      font-weight: 600;
+      font-weight: 700;
       font-size: 13px;
       transition: transform .06s ease, background .15s, border-color .15s;
       display:inline-flex;
@@ -212,24 +212,31 @@ TEMPLATE = """
       gap: 8px;
       user-select:none;
     }
-    .btn:hover{ background: rgba(255,255,255,.14); }
+    .btn:hover{ background: rgba(15,23,42,.06); }
     .btn:active{ transform: translateY(1px); }
 
     .btn.primary{
-      background: linear-gradient(135deg, rgba(124,58,237,.95), rgba(99,102,241,.95));
-      border-color: rgba(255,255,255,.18);
+      background: linear-gradient(135deg, rgba(99,102,241,.95), rgba(124,58,237,.95));
+      color: #fff;
+      border-color: rgba(99,102,241,.25);
     }
-    .btn.primary:hover{ filter: brightness(1.05); }
+    .btn.primary:hover{ filter: brightness(1.03); }
 
     .btn.ghost{
       background: transparent;
     }
 
+    .small{
+      font-size: 12px;
+      color: var(--muted);
+    }
+
     .chips{
-      padding: 0 14px 14px;
+      padding: 10px 14px 0;
       display:flex;
       flex-wrap:wrap;
       gap: 8px;
+      background: var(--card2);
     }
     .chip{
       display:inline-flex;
@@ -238,11 +245,12 @@ TEMPLATE = """
       padding: 7px 10px;
       border-radius: 999px;
       border: 1px solid var(--border);
-      background: rgba(255,255,255,.06);
+      background: rgba(99,102,241,.08);
       font-size: 12px;
-      color: var(--muted);
+      color: rgba(15,23,42,.75);
     }
-    .chip b{ color: var(--text); font-weight: 700; }
+    .chip.sort { background: rgba(34,197,94,.10); }
+    .chip b{ color: var(--text); font-weight: 800; }
     .chip .x{
       width: 18px;
       height: 18px;
@@ -251,22 +259,21 @@ TEMPLATE = """
       align-items:center;
       justify-content:center;
       border: 1px solid var(--border);
-      background: rgba(0,0,0,.18);
-      color: var(--muted);
+      background: rgba(255,255,255,.9);
+      color: rgba(15,23,42,.65);
       cursor:pointer;
-      font-weight: 800;
+      font-weight: 900;
       line-height: 1;
       user-select:none;
     }
     .chip .x:hover{
       color: var(--text);
-      border-color: rgba(255,255,255,.22);
+      border-color: rgba(15,23,42,.18);
     }
 
     .table-wrap{
       overflow:auto;
       border-top: 1px solid var(--border);
-      border-radius: 0 0 var(--radius) var(--radius);
     }
 
     table{
@@ -280,7 +287,7 @@ TEMPLATE = """
       position: sticky;
       top: 0;
       z-index: 5;
-      background: rgba(10, 14, 30, .92);
+      background: rgba(255,255,255,.92);
       backdrop-filter: blur(8px);
       border-bottom: 1px solid var(--border);
       text-align:left;
@@ -291,64 +298,60 @@ TEMPLATE = """
       white-space: nowrap;
     }
 
-    thead th .th-top{
+    /* Top area now holds the FILTER (swapped from previous layout) */
+    .th-top{
+      margin-bottom: 8px;
+    }
+
+    /* Bottom area now holds the HEADER and is clickable for sort */
+    .th-bottom{
       display:flex;
       align-items:center;
       justify-content:space-between;
       gap: 10px;
-      margin-bottom: 8px;
-    }
-
-    .th-name{
-      display:flex;
-      align-items:center;
-      gap: 8px;
       cursor:pointer;
       user-select:none;
-      color: rgba(255,255,255,.82);
-      font-weight: 700;
+      padding: 6px 8px;
+      border-radius: 10px;
+      border: 1px solid rgba(15,23,42,.06);
+      background: rgba(15,23,42,.02);
+      color: rgba(15,23,42,.86);
+      font-weight: 800;
       letter-spacing: .15px;
+    }
+    .th-bottom:hover{
+      background: rgba(99,102,241,.10);
+      border-color: rgba(99,102,241,.18);
     }
 
     .sort-ind{
       display:inline-flex;
       align-items:center;
       justify-content:center;
-      width: 22px;
-      height: 22px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: rgba(255,255,255,.06);
-      color: rgba(255,255,255,.78);
+      width: 24px;
+      height: 24px;
+      border-radius: 9px;
+      border: 1px solid rgba(15,23,42,.10);
+      background: rgba(255,255,255,.9);
+      color: rgba(15,23,42,.75);
       font-size: 11px;
-      font-weight: 800;
+      font-weight: 900;
       flex: 0 0 auto;
-    }
-
-    .filter-row{
-      display:flex;
-      gap: 6px;
-      align-items:center;
-    }
-    .filter-row select{
-      width: 72px;
-      min-width: 72px;
-      padding-left: 8px;
-      padding-right: 8px;
     }
 
     tbody td{
       padding: 9px 10px;
-      border-bottom: 1px solid rgba(255,255,255,.06);
+      border-bottom: 1px solid rgba(15,23,42,.06);
       font-size: 13px;
-      color: rgba(255,255,255,.88);
+      color: rgba(15,23,42,.92);
       white-space: nowrap;
+      background: rgba(255,255,255,.72);
     }
     tbody tr:nth-child(odd) td{
-      background: rgba(255,255,255,.02);
+      background: rgba(255,255,255,.92);
     }
     tbody tr:hover td{
-      background: rgba(124,58,237,.08);
+      background: rgba(99,102,241,.10);
     }
 
     .mono{ font-family: var(--mono); font-size: 12.5px; }
@@ -357,23 +360,12 @@ TEMPLATE = """
       padding: 10px 14px 14px;
       color: var(--muted);
       font-size: 12px;
-    }
-
-    .topbar-actions{
-      display:flex;
-      gap: 8px;
-      flex-wrap:wrap;
-      justify-content:flex-end;
-    }
-
-    .small{
-      font-size: 12px;
-      color: var(--muted);
+      background: var(--card2);
     }
 
     .table-wrap::-webkit-scrollbar { height: 10px; width: 10px; }
-    .table-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,.14); border-radius: 999px; }
-    .table-wrap::-webkit-scrollbar-track { background: rgba(255,255,255,.04); }
+    .table-wrap::-webkit-scrollbar-thumb { background: rgba(15,23,42,.18); border-radius: 999px; }
+    .table-wrap::-webkit-scrollbar-track { background: rgba(15,23,42,.06); }
   </style>
 </head>
 
@@ -387,9 +379,7 @@ TEMPLATE = """
         </div>
       </div>
 
-      <div class="topbar-actions">
-        <span class="badge">Tip: click a column name to sort</span>
-      </div>
+      <div class="badge">Click a column name to sort</div>
     </div>
 
     <form id="qform" method="get" class="card">
@@ -400,11 +390,15 @@ TEMPLATE = """
             <input type="number" name="limit" value="{{ limit }}" min="1" max="50000" />
           </div>
 
-          <button class="btn ghost" type="button" id="clearBtn" title="Clear all filters/sorts">
-            ✕ Clear
+          <button class="btn ghost" type="button" id="clearBtn" title="Clear filters & sorts">
+            ✕ Clear all
           </button>
 
-          <div class="small">Filters & sorts are applied via the URL (GET).</div>
+          <button class="btn ghost" type="button" id="clearSortsBtn" title="Clear sorts only">
+            ↕ Clear sorts
+          </button>
+
+          <div class="small">Filters & sorts are applied via URL (GET).</div>
         </div>
 
         <div class="controls-right">
@@ -416,13 +410,13 @@ TEMPLATE = """
       <div class="chips" id="chips">
         {% for col in columns %}
           {% if filters.get(col) %}
-            <span class="chip" data-kind="filter" data-col="{{ col }}">
+            <span class="chip filter" data-kind="filter" data-col="{{ col }}">
               Filter <b>{{ col }}</b>: {{ filters.get(col) }}
               <span class="x" role="button" tabindex="0" title="Remove">×</span>
             </span>
           {% endif %}
           {% if sorts.get(col) %}
-            <span class="chip" data-kind="sort" data-col="{{ col }}">
+            <span class="chip sort" data-kind="sort" data-col="{{ col }}">
               Sort <b>{{ col }}</b>: {{ '▲' if sorts.get(col)=='asc' else '▼' }}
               <span class="x" role="button" tabindex="0" title="Remove">×</span>
             </span>
@@ -437,21 +431,20 @@ TEMPLATE = """
               {% for col in columns %}
                 {% set s = sorts.get(col, '') %}
                 <th data-col="{{ col }}" data-sort="{{ s }}">
+                  <!-- TOP: filter input (was previously header area) -->
                   <div class="th-top">
-                    <div class="th-name" data-action="sort">
-                      <span>{{ col }}</span>
-                      <span class="sort-ind">
-                        {% if s=='asc' %}▲{% elif s=='desc' %}▼{% else %}↕{% endif %}
-                      </span>
-                    </div>
-                  </div>
-                  <div class="filter-row">
                     <input type="text" name="f_{{ col }}" value="{{ filters.get(col,'') }}" placeholder="Filter…" />
-                    <select name="s_{{ col }}" aria-label="Sort {{ col }}">
-                      <option value="">—</option>
-                      <option value="asc" {% if s=='asc' %}selected{% endif %}>asc</option>
-                      <option value="desc" {% if s=='desc' %}selected{% endif %}>desc</option>
-                    </select>
+                  </div>
+
+                  <!-- Keep backend-compatible sort params without showing a dropdown -->
+                  <input type="hidden" name="s_{{ col }}" value="{{ s }}">
+
+                  <!-- BOTTOM: header (was previously filter row) -->
+                  <div class="th-bottom" data-action="sort" title="Click to sort">
+                    <span>{{ col }}</span>
+                    <span class="sort-ind">
+                      {% if s=='asc' %}▲{% elif s=='desc' %}▼{% else %}↕{% endif %}
+                    </span>
                   </div>
                 </th>
               {% endfor %}
@@ -462,7 +455,7 @@ TEMPLATE = """
             {% for row in rows %}
               <tr>
                 {% for col in columns %}
-                  <td class="{% if col in ['callsymbol','putsymbol','symbol'] %}mono{% endif %}">
+                  <td class="{% if col in ['symbol'] %}mono{% endif %}">
                     {{ fmt(row.get(col)) }}
                   </td>
                 {% endfor %}
@@ -482,28 +475,30 @@ TEMPLATE = """
     (function(){
       const form = document.getElementById('qform');
 
-      // Click header name to cycle sort: none -> asc -> desc -> none
-      document.querySelectorAll('th[data-col] .th-name[data-action="sort"]').forEach(el => {
+      function setHiddenFormatHtml(){
+        let hidden = form.querySelector('input[type="hidden"][name="format"]');
+        if (!hidden){
+          hidden = document.createElement('input');
+          hidden.type = 'hidden';
+          hidden.name = 'format';
+          form.appendChild(hidden);
+        }
+        hidden.value = 'html';
+      }
+
+      // Header click cycles sort: none -> asc -> desc -> none
+      document.querySelectorAll('th[data-col] [data-action="sort"]').forEach(el => {
         el.addEventListener('click', (e) => {
           const th = e.currentTarget.closest('th[data-col]');
           const col = th.getAttribute('data-col');
           const current = th.getAttribute('data-sort') || '';
 
           const next = current === '' ? 'asc' : (current === 'asc' ? 'desc' : '');
-          // Update the select for this column
-          const sel = th.querySelector('select[name="s_' + col + '"]');
-          if (sel) sel.value = next;
+          const hid = th.querySelector('input[type="hidden"][name="s_' + col + '"]');
+          if (hid) hid.value = next;
 
-          // Force html view on header click (prevents accidental CSV if you last downloaded)
-          let hidden = form.querySelector('input[type="hidden"][name="format"]');
-          if (!hidden){
-            hidden = document.createElement('input');
-            hidden.type = 'hidden';
-            hidden.name = 'format';
-            form.appendChild(hidden);
-          }
-          hidden.value = 'html';
-
+          // Force HTML view on click
+          setHiddenFormatHtml();
           form.submit();
         });
       });
@@ -513,6 +508,13 @@ TEMPLATE = """
         const limit = form.querySelector('input[name="limit"]')?.value || '100';
         const url = new URL(window.location.href);
         window.location.href = `${url.pathname}?limit=${encodeURIComponent(limit)}&format=html`;
+      });
+
+      // Clear sorts only (keeps filters + limit)
+      document.getElementById('clearSortsBtn').addEventListener('click', () => {
+        form.querySelectorAll('input[type="hidden"][name^="s_"]').forEach(h => h.value = '');
+        setHiddenFormatHtml();
+        form.submit();
       });
 
       // Chip remove handlers
@@ -527,20 +529,11 @@ TEMPLATE = """
             const inp = form.querySelector('input[name="f_' + col + '"]');
             if (inp) inp.value = '';
           } else if (kind === 'sort'){
-            const sel = form.querySelector('select[name="s_' + col + '"]');
-            if (sel) sel.value = '';
+            const hid = form.querySelector('input[type="hidden"][name="s_' + col + '"]');
+            if (hid) hid.value = '';
           }
 
-          // Force html view after chip removal
-          let hidden = form.querySelector('input[type="hidden"][name="format"]');
-          if (!hidden){
-            hidden = document.createElement('input');
-            hidden.type = 'hidden';
-            hidden.name = 'format';
-            form.appendChild(hidden);
-          }
-          hidden.value = 'html';
-
+          setHiddenFormatHtml();
           form.submit();
         });
       });
