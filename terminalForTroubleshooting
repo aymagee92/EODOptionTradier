@@ -80,13 +80,13 @@ sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'
   || sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
 
 # ───────────────────────────────────────────────
-# ALLOW PASSWORDLESS LOCAL ACCESS
+# FORCE TRUST AUTH (TOP OF pg_hba.conf)
 # ───────────────────────────────────────────────
 PG_HBA="/etc/postgresql/${PG_VER}/main/pg_hba.conf"
 
-grep -qxF "local ${DB_NAME} ${DB_USER} trust" "$PG_HBA" || echo "local ${DB_NAME} ${DB_USER} trust" | sudo tee -a "$PG_HBA" >/dev/null
-grep -qxF "host ${DB_NAME} ${DB_USER} 127.0.0.1/32 trust" "$PG_HBA" || echo "host ${DB_NAME} ${DB_USER} 127.0.0.1/32 trust" | sudo tee -a "$PG_HBA" >/dev/null
-grep -qxF "host ${DB_NAME} ${DB_USER} ::1/128 trust" "$PG_HBA" || echo "host ${DB_NAME} ${DB_USER} ::1/128 trust" | sudo tee -a "$PG_HBA" >/dev/null
+sudo sed -i "1ilocal   ${DB_NAME}   ${DB_USER}   trust" "$PG_HBA"
+sudo sed -i "2ihost    ${DB_NAME}   ${DB_USER}   127.0.0.1/32   trust" "$PG_HBA"
+sudo sed -i "3ihost    ${DB_NAME}   ${DB_USER}   ::1/128        trust" "$PG_HBA"
 
 sudo systemctl reload postgresql
 
@@ -105,7 +105,7 @@ git clone https://github.com/aymagee92/EODOptionTradier.git
 cd EODOptionTradier
 
 # ───────────────────────────────────────────────
-# RUN BACKEND OPTIONS (CREATES TABLE + INGESTS DATA)
+# RUN BACKEND OPTIONS
 # ───────────────────────────────────────────────
 source ~/options_eod_backend/.venv/bin/activate
 python backendOptions
@@ -143,5 +143,6 @@ fi
 
 echo "Options Frontend: http://$(curl -s ifconfig.me):8000"
 echo "Storage Frontend: http://$(curl -s ifconfig.me):8001"
+
 
 
