@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+import os
+import sys
+import logging
+from datetime import datetime, timezone, date as date_type
+
+from sqlalchemy import create_engine, text
+
+# ----------------------------
+# LOGGING
+# ----------------------------
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+log = logging.getLogger("backendStorage")
+
+# ----------------------------
+# CONFIG
+# ----------------------------
+PG_DSN = os.environ["PG_DSN"]
+
+ROOT_MOUNT_PATH = os.environ.get("ROOT_MOUNT_PATH", "/")
+VOLUME_MOUNT_PATH = os.environ.get("VOLUME_MOUNT_PATH", "/mnt/volume-nyc3-01")
+
+
+# ----------------------------
+# DB
+# ----------------------------
+def get_engine():
+    return create_engine(PG_DSN, pool_pre_ping=True)
+
+
+def ensure_schema(engine):
+    ddl = """
+    CREATE TABLE IF NOT EXISTS disk_usage_daily (
+        captured_at        TIMESTAMPTZ PRIMARY KEY,
+        root_path          TEXT NOT NULL,
+        volume_path        TEXT NOT NULL,
+
+        root_total_bytes   BIGINT NOT NULL,
+        root_used_bytes    BIGINT NOT NULL,
+
+        vol_total_bytes    BIGINT NOT NULL,
+        vol_used_bytes     BIGINT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS disk_usage_daily_captured_at_idx
+    ON disk_usage_daily (captured_at);
+    """
+    with engine.begin() as conn:
+        conn.execute(text(ddl))
+
+
+# ----------------------------
+# FS STATS
+# ----------------------------
+def fs_usage_bytes(path: str) -> tuple[int, int]:
+    """
+    Returns (total_bytes, used_bytes) for the filesystem containing 'path'
+    using os.statvfs (no shell calls).
+    """
+    st = os.statvfs(path)
+    total = st.f_frsize * st.f_blocks
+    free = st.f_frsize * st.f_bfree
+    used = total - free
+    return int(total), int(used)
+
+
+def bytes_to_gb(x: int) -> float:
+    return float(x) / (1024.0 ** 3)
+
+
+def pct_used(used: int, total: int) -> float:
+    return (used / total * 100.0) if total else 0.0
+
+
+# ----------------------------
+# SNAPSHOT
+# ----------------------------
+def record_snapshot(engine, captured_at: datetime | None = None):
+    """
+    Insert one snapshot per day. If a snapshot already exists for that day
+    (based on captured_at::date), this is a no-op.
+
+    Note: This uses UTC date boundaries. Since your cron runs at 7pm ET,
+    it will still behave like "one per day" in practice.
+    """
+    ensure_schema(engine)
+
+    if captured_at is None:
+        captured_at = datetime.now(timezone.utc)
+
+    snap_day: date_type = captured_at.date()
+
+    root_total, root_used = fs_usage_bytes(ROOT_MOUNT_PATH)
+    vol_total, vol_used = fs_usage_bytes(VOLUME_MOUNT_PATH)
+
+    sql = """
+    INSERT INTO disk_usage_daily (
+        captured_at, root_path, volume_path,
+        root_total_bytes, root_used_bytes,
+        vol_total_bytes,  vol_used_bytes
+    )
+    SELECT
+        :captured_at, :root_path, :volume_path,
+        :root_total_bytes, :root_used_bytes,
+        :vol_total_bytes,  :vol_used_bytes
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM disk_usage_daily
+        WHERE captured_at::date = :snap_day
+    );
+    """
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(sql),
+            {
+                "captured_at": captured_at,
+                "snap_day": snap_day,
+                "root_path": ROOT_MOUNT_PATH,
+                "volume_path": VOLUME_MOUNT_PATH,
+                "root_total_bytes": root_total,
+                "root_used_bytes": root_used,
+                "vol_total_bytes": vol_total,
+                "vol_used_bytes": vol_used,
+            },
+        )
+
+    # Log BOTH GB + % (this matches your “show both” requirement)
+    log.info(
+        "SNAPSHOT | day=%s | root %.2f/%.2f GB (%.2f%%) | vol %.2f/%.2f GB (%.2f%%)",
+        snap_day.isoformat(),
+        bytes_to_gb(root_used), bytes_to_gb(root_total), pct_used(root_used, root_total),
+        bytes_to_gb(vol_used),  bytes_to_gb(vol_total),  pct_used(vol_used, vol_total),
+    )
+
+
+def main():
+    # Best invocation:
+    #   python backendStorage init
+    #   python backendStorage snapshot
+    if len(sys.argv) < 2:
+        print("Usage: python backendStorage [init|snapshot]")
+        sys.exit(2)
+
+    cmd = sys.argv[1].lower()
+    engine = get_engine()
+
+    if cmd == "init":
+        ensure_schema(engine)
+        log.info("Schema ensured: disk_usage_daily")
+        return
+
+    if cmd == "snapshot":
+        record_snapshot(engine)
+        return
+
+    print(f"Unknown command: {cmd}. Use init or snapshot.")
+    sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()
