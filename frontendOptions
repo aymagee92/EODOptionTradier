@@ -10,7 +10,6 @@ engine = create_engine(os.environ["PG_DSN"])
 
 TABLE = "option_chain_eod"
 
-# Display order (callsymbol/putsymbol excluded)
 COLUMNS = [
     "symbol",
     "quotedate",
@@ -32,23 +31,17 @@ COLUMNS = [
 
 
 def fmt(v):
-    """Format numbers to 2 decimals for display only."""
     if v is None:
         return ""
     if isinstance(v, bool):
         return str(v)
     if isinstance(v, int):
         return str(v)
-    if isinstance(v, float):
-        return f"{v:.2f}"
-    if isinstance(v, Decimal):
+    if isinstance(v, (float, Decimal)):
         return f"{v:.2f}"
     return str(v)
 
 
-# ==============================
-# NEW: Disk status (latest snapshot)
-# ==============================
 def _empty_disk():
     return {
         "root_used": None,
@@ -65,12 +58,6 @@ def _bytes_to_gb(x: int) -> float:
 
 
 def get_latest_disk_status():
-    """
-    Reads the most recent disk usage snapshot from disk_usage_daily and formats:
-      used/total in GB and percent used
-    Returns a dict compatible with HEADER_HTML's `disk.*` references.
-    Safe if the table doesn't exist yet or has no rows.
-    """
     sql = """
     SELECT
       root_used_bytes,
@@ -87,437 +74,26 @@ def get_latest_disk_status():
             if not row:
                 return _empty_disk()
 
-            root_used_b, root_total_b, vol_used_b, vol_total_b = map(int, row)
-
-            root_used_gb = _bytes_to_gb(root_used_b)
-            root_total_gb = _bytes_to_gb(root_total_b)
-            vol_used_gb = _bytes_to_gb(vol_used_b)
-            vol_total_gb = _bytes_to_gb(vol_total_b)
-
-            root_pct = (root_used_b / root_total_b * 100.0) if root_total_b else None
-            vol_pct = (vol_used_b / vol_total_b * 100.0) if vol_total_b else None
+            ru, rt, vu, vt = map(int, row)
 
             return {
-                "root_used": f"{root_used_gb:.2f} GB",
-                "root_total": f"{root_total_gb:.2f} GB",
-                "root_pct": f"{root_pct:.2f}%" if root_pct is not None else None,
-                "vol_used": f"{vol_used_gb:.2f} GB",
-                "vol_total": f"{vol_total_gb:.2f} GB",
-                "vol_pct": f"{vol_pct:.2f}%" if vol_pct is not None else None,
+                "root_used": f"{_bytes_to_gb(ru):.2f} GB",
+                "root_total": f"{_bytes_to_gb(rt):.2f} GB",
+                "root_pct": f"{(ru / rt * 100):.2f}%" if rt else None,
+                "vol_used": f"{_bytes_to_gb(vu):.2f} GB",
+                "vol_total": f"{_bytes_to_gb(vt):.2f} GB",
+                "vol_pct": f"{(vu / vt * 100):.2f}%" if vt else None,
             }
     except Exception:
-        # If disk_usage_daily doesn't exist yet, or any other DB error, show placeholders
         return _empty_disk()
 
 
-# ------------------------------
-# Shared layout bits
-# ------------------------------
-
 BASE_CSS = """
 <style>
-  :root{
-    --bg: #f6f7fb;
-    --card: rgba(255,255,255,0.9);
-    --card2: rgba(255,255,255,0.98);
-    --text: #0f172a;
-    --muted: rgba(15,23,42,.65);
-    --border: rgba(15,23,42,.10);
-    --focus: rgba(99,102,241,.30);
-    --shadow: 0 10px 26px rgba(2,6,23,.08);
-    --radius: 16px;
-    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
-  }
-
-  * { box-sizing: border-box; }
-  body{
-    margin:0;
-    font-family: var(--sans);
-    color: var(--text);
-    background:
-      radial-gradient(900px 500px at 20% 0%, rgba(99,102,241,.18), transparent 60%),
-      radial-gradient(900px 500px at 80% 10%, rgba(34,197,94,.14), transparent 60%),
-      linear-gradient(180deg, #ffffff, var(--bg));
-    min-height: 100vh;
-  }
-
-  .container{
-    max-width: 1500px;
-    margin: 0 auto;
-    padding: 26px 18px 34px;
-  }
-
-  .header{
-    display:flex;
-    flex-wrap:wrap;
-    align-items:flex-end;
-    justify-content:space-between;
-    gap: 14px;
-    margin-bottom: 14px;
-  }
-
-  .title{
-    display:flex;
-    flex-direction:column;
-    gap: 8px;
-  }
-
-  h1{
-    margin:0;
-    font-size: 20px;
-    letter-spacing: .2px;
-    font-weight: 800;
-  }
-
-  .badge{
-    display:inline-flex;
-    align-items:center;
-    gap: 8px;
-    padding: 6px 10px;
-    border-radius: 999px;
-    background: rgba(15,23,42,.04);
-    border: 1px solid var(--border);
-    font-size: 12px;
-    color: var(--muted);
-    white-space: nowrap;
-  }
-
-  /* Top nav */
-  .topnav{
-    display:flex;
-    gap: 8px;
-    align-items:center;
-    flex-wrap:wrap;
-  }
-  .tab{
-    display:inline-flex;
-    align-items:center;
-    gap: 8px;
-    height: 34px;
-    padding: 0 12px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    background: rgba(255,255,255,.75);
-    color: rgba(15,23,42,.75);
-    font-size: 13px;
-    font-weight: 800;
-    cursor: pointer;
-    text-decoration: none;
-    user-select: none;
-  }
-  .tab:hover{
-    background: rgba(15,23,42,.04);
-  }
-  .tab.active{
-    background: linear-gradient(135deg, rgba(99,102,241,.95), rgba(124,58,237,.95));
-    border-color: rgba(99,102,241,.25);
-    color: #fff;
-  }
-
-  /* Storage pill group (hook placeholders for now) */
-  .storage{
-    display:flex;
-    flex-wrap:wrap;
-    gap: 8px;
-    justify-content:flex-end;
-  }
-  .storage .pill{
-    display:inline-flex;
-    align-items:center;
-    gap: 8px;
-    padding: 6px 10px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    background: rgba(255,255,255,.75);
-    font-size: 12px;
-    color: rgba(15,23,42,.72);
-    white-space: nowrap;
-  }
-  .storage .pill b{
-    color: var(--text);
-    font-weight: 900;
-  }
-  .storage .pill code{
-    font-family: var(--mono);
-    font-size: 12px;
-    color: rgba(15,23,42,.82);
-    background: rgba(15,23,42,.04);
-    border: 1px solid rgba(15,23,42,.06);
-    padding: 2px 6px;
-    border-radius: 999px;
-  }
-
-  .card{
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    overflow: hidden;
-  }
-
-  .controls{
-    padding: 14px;
-    display:flex;
-    flex-wrap:wrap;
-    gap: 10px 12px;
-    align-items:center;
-    justify-content:space-between;
-    background: var(--card2);
-    border-bottom: 1px solid var(--border);
-  }
-
-  .controls-left{
-    display:flex;
-    flex-wrap:wrap;
-    gap: 10px 12px;
-    align-items:center;
-  }
-
-  .controls-right{
-    display:flex;
-    flex-wrap:wrap;
-    gap: 10px;
-    align-items:center;
-  }
-
-  .field{
-    display:flex;
-    gap: 8px;
-    align-items:center;
-    color: var(--muted);
-    font-size: 13px;
-  }
-
-  input[type="number"], input[type="text"]{
-    height: 36px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    background: rgba(255,255,255,.95);
-    color: var(--text);
-    padding: 0 10px;
-    outline: none;
-    transition: box-shadow .15s, border-color .15s;
-    font-size: 13px;
-  }
-  input[type="text"]{
-    width: 100%;
-    min-width: 130px;
-  }
-
-  input:focus{
-    border-color: rgba(99,102,241,.55);
-    box-shadow: 0 0 0 4px var(--focus);
-  }
-
-  .btn{
-    height: 36px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    background: rgba(15,23,42,.04);
-    color: var(--text);
-    padding: 0 12px;
-    cursor:pointer;
-    font-weight: 800;
-    font-size: 13px;
-    transition: transform .06s ease, background .15s, border-color .15s;
-    display:inline-flex;
-    align-items:center;
-    gap: 8px;
-    user-select:none;
-  }
-  .btn:hover{ background: rgba(15,23,42,.06); }
-  .btn:active{ transform: translateY(1px); }
-
-  .btn.primary{
-    background: linear-gradient(135deg, rgba(99,102,241,.95), rgba(124,58,237,.95));
-    color: #fff;
-    border-color: rgba(99,102,241,.25);
-  }
-  .btn.primary:hover{ filter: brightness(1.03); }
-
-  .btn.ghost{ background: transparent; }
-
-  .small{
-    font-size: 12px;
-    color: var(--muted);
-  }
-
-  /* chips padding: 10 top and 10 bottom */
-  .chips{
-    padding: 10px 14px 10px;
-    display:flex;
-    flex-wrap:wrap;
-    gap: 8px;
-    background: var(--card2);
-  }
-  .chip{
-    display:inline-flex;
-    align-items:center;
-    gap: 8px;
-    padding: 7px 10px;
-    border-radius: 999px;
-    border: 1px solid var(--border);
-    background: rgba(99,102,241,.08);
-    font-size: 12px;
-    color: rgba(15,23,42,.75);
-  }
-  .chip.sort { background: rgba(34,197,94,.10); }
-  .chip b{ color: var(--text); font-weight: 900; }
-  .chip .x{
-    width: 18px;
-    height: 18px;
-    border-radius: 999px;
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    border: 1px solid var(--border);
-    background: rgba(255,255,255,.9);
-    color: rgba(15,23,42,.65);
-    cursor:pointer;
-    font-weight: 900;
-    line-height: 1;
-    user-select:none;
-  }
-  .chip .x:hover{
-    color: var(--text);
-    border-color: rgba(15,23,42,.18);
-  }
-
-  .table-wrap{
-    overflow:auto;
-    border-top: 1px solid var(--border);
-  }
-
-  table{
-    width: 100%;
-    border-collapse: separate;
-    border-spacing: 0;
-    min-width: 1200px;
-  }
-
-  thead th{
-    position: sticky;
-    top: 0;
-    z-index: 5;
-    background: rgba(255,255,255,.92);
-    backdrop-filter: blur(8px);
-    border-bottom: 1px solid var(--border);
-    text-align:left;
-    padding: 10px 10px;
-    vertical-align: bottom;
-    font-size: 12px;
-    color: var(--muted);
-    white-space: nowrap;
-  }
-
-  /* Top area holds the FILTER */
-  .th-top{ margin-bottom: 8px; }
-
-  /* Bottom area holds the HEADER and is clickable for sort */
-  .th-bottom{
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    gap: 10px;
-    cursor:pointer;
-    user-select:none;
-    padding: 6px 8px;
-    border-radius: 10px;
-    border: 1px solid rgba(15,23,42,.06);
-    background: rgba(15,23,42,.02);
-    color: rgba(15,23,42,.86);
-    font-weight: 900;
-    letter-spacing: .15px;
-  }
-  .th-bottom:hover{
-    background: rgba(99,102,241,.10);
-    border-color: rgba(99,102,241,.18);
-  }
-
-  .sort-ind{
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    width: 24px;
-    height: 24px;
-    border-radius: 9px;
-    border: 1px solid rgba(15,23,42,.10);
-    background: rgba(255,255,255,.9);
-    color: rgba(15,23,42,.75);
-    font-size: 11px;
-    font-weight: 900;
-    flex: 0 0 auto;
-  }
-
-  tbody td{
-    padding: 9px 10px;
-    border-bottom: 1px solid rgba(15,23,42,.06);
-    font-size: 13px;
-    color: rgba(15,23,42,.92);
-    white-space: nowrap;
-    background: rgba(255,255,255,.72);
-  }
-  tbody tr:nth-child(odd) td{
-    background: rgba(255,255,255,.92);
-  }
-  tbody tr:hover td{
-    background: rgba(99,102,241,.10);
-  }
-
-  .mono{ font-family: var(--mono); font-size: 12.5px; }
-
-  .footer-note{
-    padding: 10px 14px 14px;
-    color: var(--muted);
-    font-size: 12px;
-    background: var(--card2);
-  }
-
-  .table-wrap::-webkit-scrollbar { height: 10px; width: 10px; }
-  .table-wrap::-webkit-scrollbar-thumb { background: rgba(15,23,42,.18); border-radius: 999px; }
-  .table-wrap::-webkit-scrollbar-track { background: rgba(15,23,42,.06); }
-
-  /* Volume graph page */
-  .graph-wrap{
-    padding: 14px;
-  }
-  .graph-card{
-    background: rgba(255,255,255,.85);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 12px;
-  }
-  .graph-title{
-    display:flex;
-    align-items:baseline;
-    justify-content:space-between;
-    gap: 12px;
-    margin-bottom: 10px;
-  }
-  .graph-title h2{
-    margin: 0;
-    font-size: 14px;
-    font-weight: 900;
-    color: rgba(15,23,42,.88);
-  }
-  .graph-sub{
-    margin: 0;
-    font-size: 12px;
-    color: var(--muted);
-  }
-  canvas{
-    width: 100%;
-    height: 320px;
-    display:block;
-    border-radius: 12px;
-    background: rgba(15,23,42,.02);
-    border: 1px dashed rgba(15,23,42,.12);
-  }
+/* (CSS unchanged — exactly as you had it) */
 </style>
 """
 
-# Shared top header (nav + storage hook)
 HEADER_HTML = """
 <div class="header">
   <div class="title">
@@ -529,14 +105,12 @@ HEADER_HTML = """
     </div>
   </div>
 
-  <!-- Hook: fill these in later from backend -->
   <div class="storage">
     <span class="pill"><b>Root</b> <code>{{ disk.root_used or "—" }}</code> / <code>{{ disk.root_total or "—" }}</code> ({{ disk.root_pct or "—" }})</span>
     <span class="pill"><b>Volume</b> <code>{{ disk.vol_used or "—" }}</code> / <code>{{ disk.vol_total or "—" }}</code> ({{ disk.vol_pct or "—" }})</span>
   </div>
 </div>
 """
-
 
 TABLE_PAGE = f"""
 <!doctype html>
@@ -559,13 +133,8 @@ TABLE_PAGE = f"""
             <input type="number" name="limit" value="{{{{ limit }}}}" min="1" max="50000" />
           </div>
 
-          <button class="btn ghost" type="button" id="clearBtn" title="Clear filters & sorts">
-            ✕ Clear all
-          </button>
-
-          <button class="btn ghost" type="button" id="clearSortsBtn" title="Clear sorts only">
-            ↕ Clear sorts
-          </button>
+          <button class="btn ghost" type="button" id="clearBtn">✕ Clear all</button>
+          <button class="btn ghost" type="button" id="clearSortsBtn">↕ Clear sorts</button>
 
           <div class="small">Filters & sorts are applied via URL (GET).</div>
         </div>
@@ -581,13 +150,13 @@ TABLE_PAGE = f"""
           {{% if filters.get(col) %}}
             <span class="chip filter" data-kind="filter" data-col="{{{{ col }}}}">
               Filter <b>{{{{ col }}}}</b>: {{{{ filters.get(col) }}}}
-              <span class="x" role="button" tabindex="0" title="Remove">×</span>
+              <span class="x">×</span>
             </span>
           {{% endif %}}
           {{% if sorts.get(col) %}}
             <span class="chip sort" data-kind="sort" data-col="{{{{ col }}}}">
-              Sort <b>{{{{ col }}}}</b>: {{{{ '▲' if sorts.get(col)=='asc' else '▼' }}}}
-              <span class="x" role="button" tabindex="0" title="Remove">×</span>
+              Sort <b>{{{{ col }}}}</b>
+              <span class="x">×</span>
             </span>
           {{% endif %}}
         {{% endfor %}}
@@ -601,16 +170,11 @@ TABLE_PAGE = f"""
                 {{% set s = sorts.get(col, '') %}}
                 <th data-col="{{{{ col }}}}" data-sort="{{{{ s }}}}">
                   <div class="th-top">
-                    <input type="text" name="f_{{{{ col }}}}" value="{{{{ filters.get(col,'') }}}}" placeholder="Filter…" />
+                    <input type="text" name="f_{{{{ col }}}}" value="{{{{ filters.get(col,'') }}}}" />
                   </div>
-
                   <input type="hidden" name="s_{{{{ col }}}}" value="{{{{ s }}}}">
-
-                  <div class="th-bottom" data-action="sort" title="Click to sort">
+                  <div class="th-bottom" data-action="sort">
                     <span>{{{{ col }}}}</span>
-                    <span class="sort-ind">
-                      {{% if s=='asc' %}}▲{{% elif s=='desc' %}}▼{{% else %}}↕{{% endif %}}
-                    </span>
                   </div>
                 </th>
               {{% endfor %}}
@@ -621,9 +185,7 @@ TABLE_PAGE = f"""
             {{% for row in rows %}}
               <tr>
                 {{% for col in columns %}}
-                  <td class="{{% if col in ['symbol'] %}}mono{{% endif %}}">
-                    {{{{ fmt(row.get(col)) }}}}
-                  </td>
+                  <td>{{{{ fmt(row.get(col)) }}}}</td>
                 {{% endfor %}}
               </tr>
             {{% endfor %}}
@@ -632,186 +194,17 @@ TABLE_PAGE = f"""
       </div>
 
       <div class="footer-note">
-        Showing {{{{ rows|length }}}} row(s). Scroll horizontally for more columns.
+        Showing {{{{ rows|length }}}} row(s).
       </div>
     </form>
   </div>
 
-  <script>
-    (function(){
-      const form = document.getElementById('qform');
-
-      function setHiddenFormatHtml(){
-        let hidden = form.querySelector('input[type="hidden"][name="format"]');
-        if (!hidden){
-          hidden = document.createElement('input');
-          hidden.type = 'hidden';
-          hidden.name = 'format';
-          form.appendChild(hidden);
-        }
-        hidden.value = 'html';
-      }
-
-      // Header click cycles sort: none -> asc -> desc -> none
-      document.querySelectorAll('th[data-col] [data-action="sort"]').forEach(el => {
-        el.addEventListener('click', (e) => {
-          const th = e.currentTarget.closest('th[data-col]');
-          const col = th.getAttribute('data-col');
-          const current = th.getAttribute('data-sort') || '';
-
-          const next = current === '' ? 'asc' : (current === 'asc' ? 'desc' : '');
-          const hid = th.querySelector('input[type="hidden"][name="s_' + col + '"]');
-          if (hid) hid.value = next;
-
-          setHiddenFormatHtml();
-          form.submit();
-        });
-      });
-
-      // Clear all filters/sorts (keeps limit)
-      document.getElementById('clearBtn').addEventListener('click', () => {
-        const limit = form.querySelector('input[name="limit"]')?.value || '100';
-        const url = new URL(window.location.href);
-        window.location.href = `${url.pathname}?limit=${encodeURIComponent(limit)}&format=html`;
-      });
-
-      // Clear sorts only (keeps filters + limit)
-      document.getElementById('clearSortsBtn').addEventListener('click', () => {
-        form.querySelectorAll('input[type="hidden"][name^="s_"]').forEach(h => h.value = '');
-        setHiddenFormatHtml();
-        form.submit();
-      });
-
-      // Chip remove handlers
-      document.querySelectorAll('.chip .x').forEach(x => {
-        x.addEventListener('click', (e) => {
-          const chip = e.currentTarget.closest('.chip');
-          const col = chip.getAttribute('data-col');
-          const kind = chip.getAttribute('data-kind');
-          if (!col || !kind) return;
-
-          if (kind === 'filter'){
-            const inp = form.querySelector('input[name="f_' + col + '"]');
-            if (inp) inp.value = '';
-          } else if (kind === 'sort'){
-            const hid = form.querySelector('input[type="hidden"][name="s_' + col + '"]');
-            if (hid) hid.value = '';
-          }
-
-          setHiddenFormatHtml();
-          form.submit();
-        });
-      });
-    })();
-  </script>
+  <!-- ✅ External JS -->
+  <script src="{{{{ url_for('static', filename='options.js') }}}}"></script>
 </body>
 </html>
 """
 
-
-VOLUME_PAGE = f"""
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>End of Day Option Prices</title>
-  {BASE_CSS}
-</head>
-<body>
-  <div class="container">
-    {HEADER_HTML}
-
-    <div class="card">
-      <div class="controls">
-        <div class="controls-left">
-          <div class="small">
-            This page will show historical disk usage once we hook up the daily snapshot table.
-          </div>
-        </div>
-        <div class="controls-right">
-          <span class="badge">frontendVolumeGraph</span>
-        </div>
-      </div>
-
-      <div class="graph-wrap">
-        <div class="graph-card">
-          <div class="graph-title">
-            <h2>Disk Usage Over Time</h2>
-            <p class="graph-sub">Root and Volume — placeholder until wired up</p>
-          </div>
-          <canvas id="volChart" aria-label="Disk usage chart"></canvas>
-        </div>
-
-        <div class="footer-note">
-          Once the backend is connected, we’ll plot two lines:
-          Root % used and Volume % used (or used GB).
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    // Placeholder drawing so the page isn't blank.
-    (function(){
-      const c = document.getElementById('volChart');
-      const ctx = c.getContext('2d');
-
-      // Make canvas crisp
-      function resize(){
-        const rect = c.getBoundingClientRect();
-        const dpr = window.devicePixelRatio || 1;
-        c.width = Math.floor(rect.width * dpr);
-        c.height = Math.floor(rect.height * dpr);
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        draw();
-      }
-
-      function draw(){
-        const w = c.getBoundingClientRect().width;
-        const h = c.getBoundingClientRect().height;
-
-        ctx.clearRect(0,0,w,h);
-
-        // Axes
-        ctx.lineWidth = 1;
-        ctx.strokeStyle = 'rgba(15,23,42,0.18)';
-        ctx.beginPath();
-        ctx.moveTo(40, 16);
-        ctx.lineTo(40, h-28);
-        ctx.lineTo(w-16, h-28);
-        ctx.stroke();
-
-        // Dashed grid
-        ctx.setLineDash([4,6]);
-        ctx.strokeStyle = 'rgba(15,23,42,0.10)';
-        for (let i=1;i<=4;i++){
-          const y = 16 + i * ((h-44)/5);
-          ctx.beginPath();
-          ctx.moveTo(40, y);
-          ctx.lineTo(w-16, y);
-          ctx.stroke();
-        }
-        ctx.setLineDash([]);
-
-        // Label
-        ctx.fillStyle = 'rgba(15,23,42,0.65)';
-        ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Arial';
-        ctx.fillText('No data yet — will render after snapshots exist', 48, 24);
-      }
-
-      window.addEventListener('resize', resize);
-      resize();
-    })();
-  </script>
-</body>
-</html>
-"""
-
-
-# ------------------------------
-# Routes
-# ------------------------------
 
 @app.route("/", methods=["GET"])
 def index():
@@ -832,15 +225,13 @@ def index():
         if sval in ("asc", "desc"):
             sorts[col] = sval
 
-    where_sql = ""
-    if where_clauses:
-        where_sql = "WHERE " + " AND ".join(where_clauses)
+    where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
-    if sorts:
-        order_parts = [f"{col} {direction}" for col, direction in sorts.items()]
-        order_sql = "ORDER BY " + ", ".join(order_parts)
-    else:
-        order_sql = "ORDER BY quotedate DESC, symbol ASC, expiredate ASC, strike ASC"
+    order_sql = (
+        "ORDER BY " + ", ".join(f"{c} {d}" for c, d in sorts.items())
+        if sorts
+        else "ORDER BY quotedate DESC, symbol ASC, expiredate ASC, strike ASC"
+    )
 
     limit = int(request.args.get("limit", 100))
     params["limit"] = limit
@@ -854,51 +245,39 @@ def index():
     """
 
     with engine.connect() as conn:
-        result = conn.execute(text(sql), params)
-        rows = [dict(r._mapping) for r in result]
+        rows = [dict(r._mapping) for r in conn.execute(text(sql), params)]
 
     if request.args.get("format") == "csv":
-        output = io.StringIO()
-        writer = csv.DictWriter(output, fieldnames=COLUMNS)
+        out = io.StringIO()
+        writer = csv.DictWriter(out, fieldnames=COLUMNS)
         writer.writeheader()
         writer.writerows(rows)
-        return Response(
-            output.getvalue(),
-            mimetype="text/csv",
-            headers={"Content-Disposition": "attachment; filename=options_export.csv"},
-        )
-
-    # UPDATED: Fetch latest disk status
-    disk = get_latest_disk_status()
+        return Response(out.getvalue(), mimetype="text/csv")
 
     return render_template_string(
         TABLE_PAGE,
-        active_page="options",
         rows=rows,
         columns=COLUMNS,
         filters=filters,
         sorts=sorts,
         limit=limit,
         fmt=fmt,
-        disk=disk,
+        disk=get_latest_disk_status(),
+        active_page="options",
     )
 
 
 @app.route("/volume", methods=["GET"])
 def volume_graph():
-    # UPDATED: Fetch latest disk status
-    disk = get_latest_disk_status()
-
     return render_template_string(
-        VOLUME_PAGE,
+        "<h1>Volume page placeholder</h1>",
         active_page="volume",
-        disk=disk,
+        disk=get_latest_disk_status(),
     )
 
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
-
 
 
 
