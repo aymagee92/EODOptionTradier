@@ -3,14 +3,14 @@ from sqlalchemy import create_engine, text
 import os
 import csv
 import io
+from decimal import Decimal
 
 app = Flask(__name__)
 engine = create_engine(os.environ["PG_DSN"])
 
 TABLE = "option_chain_eod"
 
-# Your requested display order (plus "all others" afterwards)
-# NOTE: DB columns are lowercase; we keep that and only change display order here.
+# Your requested display order
 COLUMNS = [
     "symbol",
     "quotedate",
@@ -37,6 +37,20 @@ COLUMNS = [
     "callsymbol",
     "putsymbol",
 ]
+
+def fmt(v):
+    """Format numbers to 2 decimals for display only."""
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return str(v)
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, float):
+        return f"{v:.2f}"
+    if isinstance(v, Decimal):
+        return f"{v:.2f}"
+    return str(v)
 
 TEMPLATE = """
 <!doctype html>
@@ -82,7 +96,7 @@ Rows:
   {% for row in rows %}
     <tr>
       {% for col in columns %}
-        <td>{{ row.get(col) }}</td>
+        <td>{{ fmt(row.get(col)) }}</td>
       {% endfor %}
     </tr>
   {% endfor %}
@@ -138,7 +152,6 @@ def index():
         writer = csv.DictWriter(output, fieldnames=COLUMNS)
         writer.writeheader()
         writer.writerows(rows)
-
         return Response(
             output.getvalue(),
             mimetype="text/csv",
@@ -153,8 +166,10 @@ def index():
         sorts=sorts,
         limit=limit,
         table=TABLE,
+        fmt=fmt,
     )
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
+
 
