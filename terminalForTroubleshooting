@@ -15,9 +15,10 @@ sudo apt update && sudo apt upgrade -y
 sudo timedatectl set-timezone America/New_York
 
 # ───────────────────────────────────────────────
-# PYTHON + ESSENTIALS + POSTGRES
+# PYTHON + ESSENTIALS + POSTGRES + CRON
 # ───────────────────────────────────────────────
-sudo apt install -y python3 python3-pip python3-venv build-essential git postgresql postgresql-contrib
+sudo apt install -y python3 python3-pip python3-venv build-essential git postgresql postgresql-contrib cron
+sudo systemctl enable --now cron
 
 # ───────────────────────────────────────────────
 # PROJECT DIRECTORY + VIRTUAL ENV
@@ -106,10 +107,41 @@ git clone https://github.com/aymagee92/EODOptionTradier.git
 cd EODOptionTradier
 
 # ───────────────────────────────────────────────
+# CRON: DAILY DISK SNAPSHOT (WEEKDAYS ONLY @ 7:00pm ET)
+# - Best practice: install cron for the current user (this is independent of venv)
+# - Cron does NOT inherit your shell env vars, so we use a wrapper script that sets them.
+# ───────────────────────────────────────────────
+cat > ~/options_eod_backend/EODOptionTradier/run_disk_snapshot.sh <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$HOME/options_eod_backend/EODOptionTradier"
+source "$HOME/options_eod_backend/.venv/bin/activate"
+
+# cron won't have your interactive shell env vars; set what snapshot needs
+export PG_DSN="postgresql+psycopg2://options_ingest@localhost:5432/options_eod"
+export ROOT_MOUNT_PATH="/"
+export VOLUME_MOUNT_PATH="/mnt/volume-nyc3-01"
+
+python backend snapshot
+SH
+
+chmod +x ~/options_eod_backend/EODOptionTradier/run_disk_snapshot.sh
+
+CRON_LINE="0 19 * * 1-5 $HOME/options_eod_backend/EODOptionTradier/run_disk_snapshot.sh >> $HOME/options_eod_backend/EODOptionTradier/disk_snapshot.log 2>&1"
+( crontab -l 2>/dev/null | grep -v "run_disk_snapshot.sh" ; echo "$CRON_LINE" ) | crontab -
+
+# ───────────────────────────────────────────────
 # MANUAL: RUN BACKEND ONCE (CREATES TABLE VIA ensure_schema)
 # ───────────────────────────────────────────────
 source ~/options_eod_backend/.venv/bin/activate
 python backend
+
+# ───────────────────────────────────────────────
+# OPTIONAL: MANUAL TEST DISK SNAPSHOT ONCE RIGHT NOW
+# ───────────────────────────────────────────────
+~/options_eod_backend/EODOptionTradier/run_disk_snapshot.sh
+tail -n 50 ~/options_eod_backend/EODOptionTradier/disk_snapshot.log || true
 
 # ───────────────────────────────────────────────
 # FRONTEND: KILL OLD THEN START NEW
@@ -127,4 +159,5 @@ if command -v ufw >/dev/null 2>&1; then
 fi
 
 echo "Frontend: http://$(curl -s ifconfig.me):8000"
+
 
