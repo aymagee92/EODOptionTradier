@@ -12,6 +12,7 @@ HEADER_HTML = r"""
     <div class="topnav">
       <a class="tab" href="/">Option Info</a>
       <a class="tab active" href="{{ url_for('storage_dashboard') }}">Storage Graph</a>
+      <a class="tab" href="/stockdata">Stock Data</a>
     </div>
     <div class="sub">
       Tracks daily disk usage snapshots (root + volume) from
@@ -150,3 +151,4 @@ def register_storage_routes(app, engine):
             vol_pct=vol_pct,
             latest_date=latest_date,
         )
+
