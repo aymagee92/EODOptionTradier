@@ -38,15 +38,18 @@ pip install --upgrade pip wheel
 pip install requests pandas sqlalchemy psycopg2-binary flask
 
 # ───────────────────────────────────────────────
-# CONFIRM VOLUME MOUNT
+# CONFIRM VOLUME MOUNT (DYNAMIC)
 # ───────────────────────────────────────────────
 lsblk
-df -h | grep -E "/mnt/volume-nyc3-01|Filesystem" || true
+df -h
+
+# Detect the largest non-root mountpoint (your DO volume)
+VOL_MNT="$(df -B1 --output=target,size | awk 'NR>1 && $1!="/" {print $2, $1}' | sort -nr | head -n1 | awk '{print $2}')"
+echo "Detected volume mount: ${VOL_MNT}"
 
 # ───────────────────────────────────────────────
 # MOVE POSTGRES DATA TO VOLUME
 # ───────────────────────────────────────────────
-VOL_MNT="/mnt/volume-nyc3-01"
 sudo systemctl stop postgresql || true
 
 PG_VER="$(ls /etc/postgresql | head -n 1)"
@@ -122,10 +125,8 @@ source ~/options_eod_backend/.venv/bin/activate
 python backendOptions || true
 
 # ───────────────────────────────────────────────
-# RUN BACKEND STORAGE SNAPSHOT (ONCE)
+# RUN BACKEND STORAGE SNAPSHOT (ONCE) (DYNAMIC)
 # ───────────────────────────────────────────────
-export ROOT_MOUNT_PATH="/"
-export VOLUME_MOUNT_PATH="/mnt/volume-nyc3-01"
 python backendStorage snapshot || true
 
 # ───────────────────────────────────────────────
