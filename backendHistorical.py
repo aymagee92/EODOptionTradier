@@ -235,7 +235,7 @@ ensure_schema(engine)
 ticker = 'AAPL'
 
 start_date = datetime(2025,1,1)
-end_date = datetime(2025,1,31)
+end_date = datetime(2025,1,10)
 
 # creates list of dates that are likely valid expiration dates
 expirations = getCandidateExpirations(start_date,end_date,True)
