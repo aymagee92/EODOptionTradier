@@ -106,7 +106,7 @@ export TRADIER_ACCESS_TOKEN="OUOFRjuCoP5C3uSBni56tOdaUhOG"
 # ───────────────────────────────────────────────
 cd ~/options_hist_backend
 rm -rf HistoricalOptionTradier
-git clone https://github.com/aymagee92/HistoricalOptionTradier.git
+git clone https://github.com/aymagee92/EODOptionTradier.git
 cd HistoricalOptionTradier
 
 # ───────────────────────────────────────────────
