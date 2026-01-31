@@ -1,54 +1,47 @@
 # =========================================================
 # HISTORICAL OPTIONS SETUP – MANUAL RUN (NO CRON)
-# Goal: create DB + table, run historical backend immediately,
-#       then run SINGLE frontend on port 8001 serving:
-#         /          (historical options)
 # =========================================================
 
-# ───────────────────────────────────────────────
+# -------------------------------
 # SYSTEM UPDATE
-# ───────────────────────────────────────────────
+# -------------------------------
 sudo apt update && sudo apt upgrade -y
 
-# ───────────────────────────────────────────────
-# TIME ZONE (EASTERN)
-# ───────────────────────────────────────────────
+# -------------------------------
+# TIME ZONE
+# -------------------------------
 sudo timedatectl set-timezone America/New_York
 
-# ───────────────────────────────────────────────
-# PYTHON + ESSENTIALS + POSTGRES
-# ───────────────────────────────────────────────
+# -------------------------------
+# PYTHON + POSTGRES
+# -------------------------------
 sudo apt install -y python3 python3-pip python3-venv build-essential git postgresql postgresql-contrib
 
-# ───────────────────────────────────────────────
-# PROJECT DIRECTORY + VIRTUAL ENV
-# ───────────────────────────────────────────────
+# -------------------------------
+# PROJECT DIR + VENV
+# -------------------------------
 cd ~
 mkdir -p options_hist_backend
 cd options_hist_backend
 python3 -m venv .venv
 source .venv/bin/activate
 
-# ───────────────────────────────────────────────
-# PYTHON LIBRARIES
-# ───────────────────────────────────────────────
 pip install --upgrade pip wheel
 pip install requests pandas sqlalchemy psycopg2-binary flask
 
-# ───────────────────────────────────────────────
-# CONFIRM VOLUME MOUNT (DYNAMIC)
-# ───────────────────────────────────────────────
+# -------------------------------
+# DETECT DO VOLUME
+# -------------------------------
 lsblk
 df -h
 
-# Detect the largest non-root mountpoint (your DO volume)
 VOL_MNT="$(df -B1 --output=target,size | awk 'NR>1 && $1!="/" {print $2, $1}' | sort -nr | head -n1 | awk '{print $2}')"
 echo "Detected volume mount: ${VOL_MNT}"
 
-# ───────────────────────────────────────────────
+# -------------------------------
 # MOVE POSTGRES DATA TO VOLUME
-# (skip this block if you already did it for live and postgres is running from the volume)
-# ───────────────────────────────────────────────
+# (skip if already done)
+# -------------------------------
 sudo systemctl stop postgresql || true
 
 PG_VER="$(ls /etc/postgresql | head -n 1)"
@@ -65,9 +58,9 @@ sudo sed -i "s|^#\?listen_addresses =.*|listen_addresses = 'localhost'|" \
 
 sudo systemctl start postgresql
 
-# ───────────────────────────────────────────────
-# CREATE ROLE + VERIFY/CREATE DATABASE (HISTORICAL)
-# ───────────────────────────────────────────────
+# -------------------------------
+# CREATE HISTORICAL DB + ROLE
+# -------------------------------
 DB_NAME="options_hist"
 DB_USER="options_hist_ingest"
 
@@ -84,9 +77,6 @@ SQL
 sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 \
   || sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
 
-# ───────────────────────────────────────────────
-# FORCE TRUST AUTH (TOP OF pg_hba.conf) (HISTORICAL)
-# ───────────────────────────────────────────────
 PG_HBA="/etc/postgresql/${PG_VER}/main/pg_hba.conf"
 
 sudo sed -i "1ilocal   ${DB_NAME}   ${DB_USER}   trust" "$PG_HBA"
@@ -95,40 +85,41 @@ sudo sed -i "3ihost    ${DB_NAME}   ${DB_USER}   ::1/128        trust" "$PG_HBA"
 
 sudo systemctl reload postgresql
 
-# ───────────────────────────────────────────────
-# ENVIRONMENT VARIABLES
-# ───────────────────────────────────────────────
+# -------------------------------
+# ENV VARS
+# -------------------------------
 export PG_DSN_HIST="postgresql+psycopg2://options_hist_ingest@localhost:5432/options_hist"
 export TRADIER_ACCESS_TOKEN="OUOFRjuCoP5C3uSBni56tOdaUhOG"
 
-# ───────────────────────────────────────────────
-# CLONE (FRESH)
-# ───────────────────────────────────────────────
+# -------------------------------
+# CLONE REPO (CORRECT NAME)
+# -------------------------------
 cd ~/options_hist_backend
-rm -rf HistoricalOptionTradier
+rm -rf EODOptionTradier
 git clone https://github.com/aymagee92/EODOptionTradier.git
-cd HistoricalOptionTradier
+cd EODOptionTradier
 
-# ───────────────────────────────────────────────
-# RUN BACKEND HISTORICAL INGEST
-# ───────────────────────────────────────────────
+# -------------------------------
+# RUN HISTORICAL BACKEND (ONE SHOT)
+# -------------------------------
 source ~/options_hist_backend/.venv/bin/activate
-python backendHistorical || true
+python backendHistorical.py
 
-# ───────────────────────────────────────────────
-# FRONTEND (SINGLE APP on :8001 serving /)
-# ───────────────────────────────────────────────
-pkill -f "python frontendHistorical" >/dev/null 2>&1 || true
+# -------------------------------
+# RUN HISTORICAL FRONTEND (:8001)
+# -------------------------------
+pkill -f "python frontendHistorical.py" >/dev/null 2>&1 || true
 
-nohup "$HOME/options_hist_backend/.venv/bin/python" frontendHistorical \
-  > "$HOME/options_hist_backend/HistoricalOptionTradier/frontendHistorical.log" 2>&1 &
+nohup "$HOME/options_hist_backend/.venv/bin/python" frontendHistorical.py \
+  > "$HOME/options_hist_backend/EODOptionTradier/frontendHistorical.log" 2>&1 &
 
-# ───────────────────────────────────────────────
-# OPEN PORTS IF UFW IS ENABLED
-# ───────────────────────────────────────────────
+# -------------------------------
+# FIREWALL
+# -------------------------------
 if command -v ufw >/dev/null 2>&1; then
   sudo ufw allow 8001/tcp || true
 fi
 
 IP="$(curl -s ifconfig.me)"
-echo "Historical Frontend:  http://$IP:8001"
+echo "Historical Frontend: http://$IP:8001"
+
