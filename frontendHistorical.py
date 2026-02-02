@@ -57,7 +57,7 @@ TABLE_PAGE = """
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Historical Options</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='historical.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='options.css') }}">
 </head>
 <body>
   <div class="container">
@@ -149,7 +149,7 @@ TABLE_PAGE = """
     </form>
   </div>
 
-  <script src="{{ url_for('static', filename='historical.js') }}"></script>
+  <script src="{{ url_for('static', filename='options.js') }}"></script>
 </body>
 </html>
 """
@@ -221,3 +221,4 @@ def index():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8001)
+
