@@ -13,6 +13,7 @@ PG_DSN_HIST = os.environ["PG_DSN_HIST"]
 
 start_date = datetime.fromisoformat(os.environ.get("START_DATE", "2025-01-01"))
 end_date = datetime.fromisoformat(os.environ.get("END_DATE", "2025-01-06"))
+ticker = os.environ.get("TICKER", "AAPL")
 beginStrike = int(os.environ.get("BEGIN_STRIKE", "1"))
 endStrike   = int(os.environ.get("END_STRIKE", "1000"))
 timeBetween = float(os.environ.get("TIME_BETWEEN", "0.8"))
@@ -320,8 +321,6 @@ def update_underlying_last(engine, symbol: str, close_map: dict):
 # --- BEGINNING OF CODE ---
 engine = get_engine()
 ensure_schema(engine)
-
-ticker = 'AAPL'
 
 # NEW: reject duplicate tickers BEFORE doing any API work
 if ticker_already_loaded(engine, ticker):
