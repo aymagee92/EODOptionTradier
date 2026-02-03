@@ -11,11 +11,11 @@ INTERVAL = "daily"
 LOG_FILE_ADDRESS = os.path.join(os.getcwd(), 'tradier_log.txt')
 PG_DSN_HIST = os.environ["PG_DSN_HIST"]
 
-start_date = datetime(2025, 1, 1)
-end_date = datetime(2025, 1, 6)
-beginStrike = 1
-endStrike = 1000
-timeBetween = 0.8
+start_date = datetime.fromisoformat(os.environ.get("START_DATE", "2025-01-01"))
+end_date = datetime.fromisoformat(os.environ.get("END_DATE", "2025-01-06"))
+beginStrike = int(os.environ.get("BEGIN_STRIKE", "1"))
+endStrike   = int(os.environ.get("END_STRIKE", "1000"))
+timeBetween = float(os.environ.get("TIME_BETWEEN", "0.8"))
 
 def get_engine():
     return create_engine(PG_DSN_HIST, pool_pre_ping=True)
