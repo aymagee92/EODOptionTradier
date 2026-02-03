@@ -42,7 +42,7 @@ pip install --upgrade pip wheel
 pip install requests pandas sqlalchemy psycopg2-binary flask
 
 # ───────────────────────────────────────────────
-# CONFIRM VOLUME MOUNT (DYNAMIC)
+# CONFIRM VOLUME MOUNT
 # ───────────────────────────────────────────────
 lsblk
 df -h
@@ -131,12 +131,12 @@ test -f static/storage.js  || echo "MISSING: static/storage.js"
 test -f static/storage.css || echo "MISSING: static/storage.css"
 
 # ───────────────────────────────────────────────
-# FRONTEND ONLY (NO BACKENDS)
+# FRONTEND ONLY
 # ───────────────────────────────────────────────
 source ~/options_eod_backend/.venv/bin/activate
-pkill -f "python frontendOptions" >/dev/null 2>&1 || true
+pkill -f "python frontendOptions.py" >/dev/null 2>&1 || true
 
-nohup "$HOME/options_eod_backend/.venv/bin/python" frontendOptions \
+nohup "$HOME/options_eod_backend/.venv/bin/python" frontendOptions.py \
   > "$HOME/options_eod_backend/EODOptionTradier/frontendOptions.log" 2>&1 &
 
 # ───────────────────────────────────────────────
