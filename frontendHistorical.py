@@ -6,8 +6,6 @@ import io
 from decimal import Decimal
 import subprocess
 
-from frontendStorage import register_storage_routes
-
 # -------------------------
 # CONFIG
 # -------------------------
@@ -177,7 +175,7 @@ TABLE_PAGE = """
 # ROUTE REGISTRATION
 # -------------------------
 def register_historical_routes(app):
-    register_storage_routes(app, engine_hist)
+    # DO NOT register /storage here. It is already registered once in frontendOptions.py.
 
     @app.route("/historical", methods=["GET"])
     def historical():
@@ -212,5 +210,4 @@ def register_historical_routes(app):
             fmt=fmt,
             disk=get_latest_disk_status(),
         )
-
 
