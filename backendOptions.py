@@ -18,11 +18,11 @@ log = logging.getLogger("EOD")
 # ----------------------------
 # CONFIG
 # ----------------------------
-# Renamed from TICKERS -> frontendTickers and made env-overridable.
-# Set like: export FRONTEND_TICKERS="AAPL,MSFT,TSLA,AMD"
-frontendTickers = [
+# Set like:
+# export CURRENT_DOWNLOAD_TICKERS="AAPL,MSFT,TSLA,AMD"
+currentDownloadTickers = [
     t.strip()
-    for t in os.environ.get("FRONTEND_TICKERS", "AAPL,MSFT,TSLA,AMD").split(",")
+    for t in os.environ.get("CURRENT_DOWNLOAD_TICKERS", "AAPL,MSFT,TSLA,AMD").split(",")
     if t.strip()
 ]
 
@@ -35,8 +35,8 @@ BASE_URL = "https://api.tradier.com/v1"
 HTTP_TIMEOUT = 20
 MAX_RETRIES = 5
 TICKERS_PER_BATCH = 10
-SLEEP_BETWEEN_TICKERS_SECONDS = 0.0      # set >0 if you hit rate limits
-SLEEP_BETWEEN_EXPIRATIONS_SECONDS = 0.0  # set >0 if you hit rate limits
+SLEEP_BETWEEN_TICKERS_SECONDS = 0.0
+SLEEP_BETWEEN_EXPIRATIONS_SECONDS = 0.0
 
 HEADERS = {
     "Authorization": f"Bearer {TRADIER_TOKEN}",
@@ -47,7 +47,7 @@ session = requests.Session()
 session.headers.update(HEADERS)
 
 # ----------------------------
-# HTTP HELPERS (fast + resilient)
+# HTTP HELPERS
 # ----------------------------
 def tradier_get(path: str, params: dict | None = None) -> dict:
     url = f"{BASE_URL}{path}"
@@ -107,7 +107,10 @@ def get_expirations(ticker: str) -> list[str]:
     return dates or []
 
 def get_chain(ticker: str, expiration: str) -> list[dict]:
-    j = tradier_get("/markets/options/chains", {"symbol": ticker, "expiration": expiration, "greeks": "false"})
+    j = tradier_get(
+        "/markets/options/chains",
+        {"symbol": ticker, "expiration": expiration, "greeks": "false"}
+    )
     options = (j.get("options") or {}).get("option", [])
     if isinstance(options, dict):
         return [options]
@@ -146,7 +149,6 @@ def _get_pk_constraint_name(conn, table_name: str) -> str | None:
     return r[0] if r else None
 
 def ensure_schema(engine):
-    # Create table with new schema (including runTime) if it doesn't exist
     ddl = """
     CREATE TABLE IF NOT EXISTS option_chain_eod (
         symbol           TEXT NOT NULL,
@@ -177,12 +179,12 @@ def ensure_schema(engine):
     """
     with engine.begin() as conn:
         conn.execute(text(ddl))
-
-        # If the table existed before (without runTime), migrate it safely
         conn.execute(text("ALTER TABLE option_chain_eod ADD COLUMN IF NOT EXISTS runTime TIME;"))
-
-        # Backfill any NULL runTime for legacy rows so we can enforce NOT NULL
-        conn.execute(text("UPDATE option_chain_eod SET runTime = COALESCE(runTime, TIME '00:00:00') WHERE runTime IS NULL;"))
+        conn.execute(text(
+            "UPDATE option_chain_eod "
+            "SET runTime = COALESCE(runTime, TIME '00:00:00') "
+            "WHERE runTime IS NULL;"
+        ))
         conn.execute(text("ALTER TABLE option_chain_eod ALTER COLUMN runTime SET NOT NULL;"))
 
         wanted_pk = ["quotedate", "runtime", "symbol", "expiredate", "strike"]
@@ -192,7 +194,10 @@ def ensure_schema(engine):
             pk_name = _get_pk_constraint_name(conn, "option_chain_eod")
             if pk_name:
                 conn.execute(text(f'ALTER TABLE option_chain_eod DROP CONSTRAINT "{pk_name}";'))
-            conn.execute(text("ALTER TABLE option_chain_eod ADD PRIMARY KEY (quoteDate, runTime, symbol, expireDate, strike);"))
+            conn.execute(
+                text("ALTER TABLE option_chain_eod "
+                     "ADD PRIMARY KEY (quoteDate, runTime, symbol, expireDate, strike);")
+            )
 
 def upsert_rows(engine, rows: list[dict]):
     if not rows:
@@ -224,7 +229,6 @@ def chunked(lst, n):
         yield lst[i:i + n]
 
 def current_runtime_hhmmss() -> str:
-    # Store the actual time the job ran (ET), since you're scheduling at 09:30 and 16:00
     return datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M:%S")
 
 # ----------------------------
@@ -238,12 +242,12 @@ def run_eod():
     run_time = current_runtime_hhmmss()
     log.info(
         "RUN START | %s tickers | run_date=%s run_time=%s",
-        len(frontendTickers),
+        len(currentDownloadTickers),
         run_date.isoformat(),
         run_time
     )
 
-    for tickers_batch in chunked(frontendTickers, TICKERS_PER_BATCH):
+    for tickers_batch in chunked(currentDownloadTickers, TICKERS_PER_BATCH):
         for ticker in tickers_batch:
             t0 = time.time()
             try:
