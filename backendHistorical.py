@@ -13,7 +13,7 @@ PG_DSN_HIST = os.environ["PG_DSN_HIST"]
 
 start_date = datetime.fromisoformat(os.environ.get("START_DATE", "2025-01-01"))
 end_date = datetime.fromisoformat(os.environ.get("END_DATE", "2025-01-06"))
-ticker = os.environ.get("TICKER", "AAPL")
+backendTicker = os.environ.get("BACKEND_TICKER", "AAPL")
 beginStrike = int(os.environ.get("BEGIN_STRIKE", "1"))
 endStrike   = int(os.environ.get("END_STRIKE", "1000"))
 timeBetween = float(os.environ.get("TIME_BETWEEN", "0.8"))
@@ -83,10 +83,10 @@ def upsert_rows(engine, rows):
         with raw.cursor() as cur:
             execute_values(cur, sql, tuples, page_size=2000)
 
-def connectToTradierHistory(ticker, startDate, endDate):
+def connectToTradierHistory(backendTicker, startDate, endDate):
     response = requests.get(
         'https://api.tradier.com/v1/markets/history',
-        params={'symbol': ticker, 'interval': INTERVAL, 'start': startDate, 'end': endDate},
+        params={'symbol': backendTicker, 'interval': INTERVAL, 'start': startDate, 'end': endDate},
         headers={'Authorization': f'Bearer {ACCESS_TOKEN}', 'Accept': 'application/json'}
     )
     if response.status_code != 200:
@@ -323,14 +323,14 @@ engine = get_engine()
 ensure_schema(engine)
 
 # NEW: reject duplicate tickers BEFORE doing any API work
-if ticker_already_loaded(engine, ticker):
-    print(f"[SKIP] {ticker} already exists in option_history_eod. Exiting to avoid duplicate run.")
+if ticker_already_loaded(engine, backendTicker):
+    print(f"[SKIP] {backendTicker} already exists in option_history_eod. Exiting to avoid duplicate run.")
     raise SystemExit(0)
 
 expirations = getCandidateExpirations(start_date, end_date, True)
 
 for exp_date in expirations:
-    if not expirationLooksValid(ticker, exp_date):
+    if not expirationLooksValid(backendTicker, exp_date):
         printAndLog("NOTHING EXPIRATION " + exp_date.strftime('%Y-%m-%d'))
         continue
 
@@ -344,24 +344,24 @@ for exp_date in expirations:
             count += 1
             print(f"{count}/{total} testing {call_put} strike {strike}", end="\r", flush=True)
 
-            occ = buildOCC(ticker, exp_date, call_put, strike)
+            occ = buildOCC(backendTicker, exp_date, call_put, strike)
             result = connectToTradierHistory(occ, startDate, endDate)
 
             if result:
                 print(" " * 80, end="\r")
                 print("success", exp_date.strftime('%Y-%m-%d'), call_put, "strike", strike)
 
-                rows = historyDaysToRows(ticker, exp_date, strike, call_put, result)
+                rows = historyDaysToRows(backendTicker, exp_date, strike, call_put, result)
                 upsert_rows(engine, rows)
 
             time.sleep(timeBetween)
 
 # After all option rows are stored, fill underlyingLast based on quoteDate.
-min_qd, max_qd = get_quote_date_range(engine, ticker)
+min_qd, max_qd = get_quote_date_range(engine, backendTicker)
 if min_qd and max_qd:
-    print(f"Filling underlyingLast for {ticker}: {min_qd} -> {max_qd}")
-    close_map = get_underlying_close_map_for_range(ticker, min_qd, max_qd)
-    update_underlying_last(engine, ticker, close_map)
+    print(f"Filling underlyingLast for {backendTicker}: {min_qd} -> {max_qd}")
+    close_map = get_underlying_close_map_for_range(backendTicker, min_qd, max_qd)
+    update_underlying_last(engine, backendTicker, close_map)
     print("Done updating underlyingLast.")
 else:
     print("No rows found; nothing to update.")
