@@ -11,6 +11,10 @@ INTERVAL = "daily"
 LOG_FILE_ADDRESS = os.path.join(os.getcwd(), 'tradier_log.txt')
 PG_DSN_HIST = os.environ["PG_DSN_HIST"]
 
+beginStrike = 1
+endStrike = 1000
+timeBetween = 0.8
+
 def get_engine():
     return create_engine(PG_DSN_HIST, pool_pre_ping=True)
 
@@ -335,10 +339,10 @@ for exp_date in expirations:
     startDate = (exp_date - timedelta(days=31)).strftime('%Y-%m-%d')
     endDate = exp_date.strftime('%Y-%m-%d')
 
-    total = 2000
+    total = (endStrike * 2)
     count = 0
     for call_put in ['C', 'P']:
-        for strike in range(1, 1001):
+        for strike in range(beginStrike, endStrike+1):
             count += 1
             print(f"{count}/{total} testing {call_put} strike {strike}", end="\r", flush=True)
 
@@ -352,7 +356,7 @@ for exp_date in expirations:
                 rows = historyDaysToRows(ticker, exp_date, strike, call_put, result)
                 upsert_rows(engine, rows)
 
-            time.sleep(0.8)
+            time.sleep(timeBetween)
 
 # After all option rows are stored, fill underlyingLast based on quoteDate.
 min_qd, max_qd = get_quote_date_range(engine, ticker)
