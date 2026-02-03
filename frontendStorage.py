@@ -32,13 +32,6 @@ HEADER_HTML = r"""
 </div>
 """
 
-
-  <div class="pill">
-    Latest snapshot: <code>{{ latest_date or "—" }}</code>
-  </div>
-</div>
-"""
-
 STORAGE_PAGE = r"""
 <!doctype html>
 <html lang="en">
@@ -110,12 +103,6 @@ def _bytes_to_gb(x: int) -> float:
     return float(x) / (1024.0 ** 3)
 
 def register_storage_routes(app, engine):
-    """
-    IMPORTANT CHANGE:
-    - storage snapshots should be droplet-wide and shared
-    - always read disk_usage_daily from PG_DSN (main DB), not from whatever engine
-      the caller is using (like PG_DSN_HIST)
-    """
     storage_engine = create_engine(os.environ["PG_DSN"], pool_pre_ping=True)
 
     @app.route("/storage", methods=["GET"])
