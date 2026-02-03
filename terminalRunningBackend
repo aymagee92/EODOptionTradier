@@ -11,6 +11,7 @@ source ~/options_eod_backend/.venv/bin/activate
 python backendStorage.py snapshot
 
 // run in this format to update the environment variables before running the backendHistorical.py
+TICKER=MSFT \
 START_DATE=2025-02-01 \
 END_DATE=2025-02-10 \
 BEGIN_STRIKE=50 \
