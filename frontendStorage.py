@@ -1,5 +1,6 @@
 from flask import render_template_string, url_for
 from sqlalchemy import text, create_engine
+from sqlalchemy.exc import ProgrammingError
 import os
 
 HEADER_HTML = r"""
@@ -99,8 +100,38 @@ STORAGE_PAGE = r"""
 </html>
 """
 
+EMPTY_STORAGE_PAGE = r"""
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Storage Usage Over Time</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='storage.css') }}">
+</head>
+<body>
+  <div class="container">
+    """ + HEADER_HTML + r"""
+    <div class="card">
+      <div class="empty">
+        Storage snapshots table <code>disk_usage_daily</code> does not exist yet.
+        Run <code>backendStorage.py snapshot</code> once, then refresh.
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
 def _bytes_to_gb(x: int) -> float:
     return float(x) / (1024.0 ** 3)
+
+def _is_missing_table_error(e: Exception) -> bool:
+    orig = getattr(e, "orig", None)
+    if orig is not None and orig.__class__.__name__ == "UndefinedTable":
+        return True
+    msg = str(e).lower()
+    return "does not exist" in msg and "relation" in msg
 
 def register_storage_routes(app, engine):
     storage_engine = create_engine(os.environ["PG_DSN"], pool_pre_ping=True)
@@ -117,8 +148,18 @@ def register_storage_routes(app, engine):
         FROM disk_usage_daily
         ORDER BY captured_at::date ASC
         """
-        with storage_engine.connect() as conn:
-            rows = [dict(r._mapping) for r in conn.execute(text(sql))]
+
+        try:
+            with storage_engine.connect() as conn:
+                rows = [dict(r._mapping) for r in conn.execute(text(sql))]
+        except ProgrammingError as e:
+            if _is_missing_table_error(e):
+                return render_template_string(
+                    EMPTY_STORAGE_PAGE,
+                    active_page="storage",
+                    latest_date=None,
+                )
+            raise
 
         points = []
         labels = []
@@ -160,3 +201,4 @@ def register_storage_routes(app, engine):
             vol_pct=vol_pct,
             latest_date=latest_date,
         )
+
