@@ -9,33 +9,17 @@ from datetime import datetime, timezone, date as date_type
 
 from sqlalchemy import create_engine, text
 
-# ----------------------------
-# LOGGING
-# ----------------------------
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger("backendStorage")
 
-# ----------------------------
-# CONFIG
-# ----------------------------
 PG_DSN = os.environ["PG_DSN"]
 
 ROOT_MOUNT_PATH = os.environ.get("ROOT_MOUNT_PATH", "/")
-
-# If set, we will use it. If not set, we will auto-detect at runtime.
 VOLUME_MOUNT_PATH = os.environ.get("VOLUME_MOUNT_PATH")
 
-
-# ----------------------------
-# VOLUME DETECTION (dynamic)
-# ----------------------------
 def _lsblk_detect_volume_mount() -> str | None:
-    """
-    Prefer lsblk JSON to find the largest mounted filesystem that isn't root/boot/tmpfs.
-    """
     if shutil.which("lsblk") is None:
         return None
-
     try:
         out = subprocess.check_output(
             ["lsblk", "-J", "-b", "-o", "NAME,TYPE,SIZE,MOUNTPOINT"],
@@ -83,12 +67,8 @@ def _lsblk_detect_volume_mount() -> str | None:
 
 
 def _df_detect_volume_mount() -> str | None:
-    """
-    Fallback: parse `df -B1` and choose the largest mounted filesystem that isn't root/boot/tmpfs.
-    """
     if shutil.which("df") is None:
         return None
-
     try:
         out = subprocess.check_output(["df", "-B1"], text=True)
     except Exception:
@@ -104,7 +84,6 @@ def _df_detect_volume_mount() -> str | None:
         parts = ln.split()
         if len(parts) < 6:
             continue
-
         fs, total_b, used_b, avail_b, usepct, mnt = parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
 
         if fs.startswith(("tmpfs", "udev")):
@@ -129,13 +108,6 @@ def _df_detect_volume_mount() -> str | None:
 
 
 def detect_volume_mount() -> str:
-    """
-    Priority:
-      1) VOLUME_MOUNT_PATH env var if set
-      2) lsblk-based detection
-      3) df-based detection
-      4) fallback to "/" (last resort)
-    """
     if VOLUME_MOUNT_PATH:
         return VOLUME_MOUNT_PATH
 
@@ -150,9 +122,6 @@ def detect_volume_mount() -> str:
     return "/"
 
 
-# ----------------------------
-# DB
-# ----------------------------
 def get_engine():
     return create_engine(PG_DSN, pool_pre_ping=True)
 
@@ -178,14 +147,7 @@ def ensure_schema(engine):
         conn.execute(text(ddl))
 
 
-# ----------------------------
-# FS STATS
-# ----------------------------
 def fs_usage_bytes(path: str) -> tuple[int, int]:
-    """
-    Returns (total_bytes, used_bytes) for the filesystem containing 'path'
-    using os.statvfs (no shell calls).
-    """
     st = os.statvfs(path)
     total = st.f_frsize * st.f_blocks
     free = st.f_frsize * st.f_bfree
@@ -201,17 +163,7 @@ def pct_used(used: int, total: int) -> float:
     return (used / total * 100.0) if total else 0.0
 
 
-# ----------------------------
-# SNAPSHOT
-# ----------------------------
 def record_snapshot(engine, captured_at: datetime | None = None):
-    """
-    Insert one snapshot per day. If a snapshot already exists for that day
-    (based on captured_at::date), this is a no-op.
-
-    Note: This uses UTC date boundaries. Since your cron runs at 7pm ET,
-    it will still behave like "one per day" in practice.
-    """
     ensure_schema(engine)
 
     if captured_at is None:
@@ -219,7 +171,6 @@ def record_snapshot(engine, captured_at: datetime | None = None):
 
     snap_day: date_type = captured_at.date()
 
-    # Dynamic volume mount detection (no hardcoding needed)
     volume_path = detect_volume_mount()
 
     root_total, root_used = fs_usage_bytes(ROOT_MOUNT_PATH)
@@ -257,7 +208,6 @@ def record_snapshot(engine, captured_at: datetime | None = None):
             },
         )
 
-    # Log BOTH GB + % (this matches your “show both” requirement)
     log.info(
         "SNAPSHOT | day=%s | root %.2f/%.2f GB (%.2f%%) | vol %.2f/%.2f GB (%.2f%%) | volume_path=%s",
         snap_day.isoformat(),
@@ -268,9 +218,6 @@ def record_snapshot(engine, captured_at: datetime | None = None):
 
 
 def main():
-    # Best invocation:
-    #   python backendStorage init
-    #   python backendStorage snapshot
     if len(sys.argv) < 2:
         print("Usage: python backendStorage [init|snapshot]")
         sys.exit(2)
@@ -293,4 +240,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
