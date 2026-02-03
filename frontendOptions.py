@@ -208,7 +208,7 @@ def get_latest_disk_status():
 HEADER_HTML = """
 <div class="header">
   <div class="title">
-    <h1>End of Day Option Prices</h1>
+    <h1>Option Price Data</h1>
     <div class="topnav">
       <a class="tab {% if active_page=='options' %}active{% endif %}" href="{{ url_for('index') }}">
         Option Info
