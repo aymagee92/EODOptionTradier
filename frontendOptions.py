@@ -6,6 +6,8 @@ import csv
 import io
 from decimal import Decimal
 import subprocess
+import json
+import shutil
 
 from frontendStorage import register_storage_routes
 from frontendHistorical import register_historical_routes
@@ -68,15 +70,130 @@ def _df_usage(mount: str):
     except Exception:
         return (None, None, None)
 
+def _lsblk_detect_volume_mount() -> str | None:
+    """
+    Prefer lsblk JSON to find the largest mounted filesystem that isn't root/boot/tmpfs.
+    """
+    if shutil.which("lsblk") is None:
+        return None
+    try:
+        out = subprocess.check_output(
+            ["lsblk", "-J", "-b", "-o", "NAME,TYPE,SIZE,MOUNTPOINT"],
+            text=True,
+        )
+        data = json.loads(out)
+    except Exception:
+        return None
+
+    candidates: list[tuple[int, str]] = []
+
+    def walk(nodes):
+        for n in nodes or []:
+            mnt = n.get("mountpoint")
+            typ = n.get("type")
+            size = n.get("size")
+            children = n.get("children") or []
+
+            if mnt and typ in ("part", "lvm", "crypt", "disk"):
+                try:
+                    sz = int(size)
+                except Exception:
+                    sz = 0
+
+                bad_exact = {"/", "/boot", "/boot/efi"}
+                bad_prefixes = ("/run", "/dev", "/proc", "/sys")
+
+                if mnt in bad_exact:
+                    pass
+                elif any(mnt.startswith(p) for p in bad_prefixes):
+                    pass
+                else:
+                    candidates.append((sz, mnt))
+
+            if children:
+                walk(children)
+
+    walk((data or {}).get("blockdevices") or [])
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
+
+def _df_detect_volume_mount() -> str | None:
+    """
+    Fallback: parse `df -B1` and choose the largest mounted filesystem that isn't root/boot/tmpfs.
+    """
+    if shutil.which("df") is None:
+        return None
+    try:
+        out = subprocess.check_output(["df", "-B1"], text=True)
+    except Exception:
+        return None
+
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    if len(lines) < 2:
+        return None
+
+    candidates: list[tuple[int, str]] = []
+    for ln in lines[1:]:
+        parts = ln.split()
+        if len(parts) < 6:
+            continue
+
+        fs, total_b, used_b, avail_b, usepct, mnt = parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
+
+        if fs.startswith(("tmpfs", "udev")):
+            continue
+        if mnt in ("/", "/boot", "/boot/efi"):
+            continue
+        if mnt.startswith(("/run", "/dev", "/proc", "/sys")):
+            continue
+
+        try:
+            tb = int(total_b)
+        except Exception:
+            continue
+
+        candidates.append((tb, mnt))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return candidates[0][1]
+
+def detect_volume_mount() -> str:
+    """
+    Priority:
+      1) VOLUME_MOUNT_PATH env var if set
+      2) lsblk-based detection
+      3) df-based detection
+      4) fallback to "/" (last resort)
+    """
+    env_mnt = os.environ.get("VOLUME_MOUNT_PATH")
+    if env_mnt:
+        return env_mnt
+
+    mnt = _lsblk_detect_volume_mount()
+    if mnt:
+        return mnt
+
+    mnt = _df_detect_volume_mount()
+    if mnt:
+        return mnt
+
+    return "/"
+
 def get_latest_disk_status():
     root_used, root_total, root_pct = _df_usage("/")
 
-    vol_used = vol_total = vol_pct = None
-    for mount in ("/mnt/volume", "/volume", "/mnt", "/data"):
-        u, t, p = _df_usage(mount)
-        if u and t and p:
-            vol_used, vol_total, vol_pct = u, t, p
-            break
+    volume_mount = detect_volume_mount()
+    vol_used, vol_total, vol_pct = _df_usage(volume_mount)
+
+    # Safety: if detection fails and we fell back to "/", don't show duplicate "Volume" pills.
+    if volume_mount == "/":
+        vol_used = vol_total = vol_pct = None
 
     return {
         "root_used": root_used,
@@ -317,5 +434,6 @@ def index():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
+
 
 
