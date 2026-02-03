@@ -47,50 +47,49 @@ def fmt(v):
     return str(v)
 
 
-def _empty_disk():
-    return {
-        "root_used": None,
-        "root_total": None,
-        "root_pct": None,
-        "vol_used": None,
-        "vol_total": None,
-        "vol_pct": None,
-    }
+# -------------------------
+# Disk status (droplet-wide, OS-level)
+# -------------------------
+import subprocess
 
-
-def _bytes_to_gb(x: int) -> float:
-    return float(x) / (1024.0 ** 3)
-
-
-def get_latest_disk_status():
-    sql = """
-    SELECT
-      root_used_bytes,
-      root_total_bytes,
-      vol_used_bytes,
-      vol_total_bytes
-    FROM disk_usage_daily
-    ORDER BY captured_at DESC
-    LIMIT 1
+def _df_usage(mount: str):
+    """
+    Returns (used, total, pct) strings for a mount point using `df -h`.
+    Example: ('18G', '48G', '39%')
     """
     try:
-        with engine.connect() as conn:
-            row = conn.execute(text(sql)).fetchone()
-            if not row:
-                return _empty_disk()
-
-            ru, rt, vu, vt = map(int, row)
-
-            return {
-                "root_used": f"{_bytes_to_gb(ru):.2f} GB",
-                "root_total": f"{_bytes_to_gb(rt):.2f} GB",
-                "root_pct": f"{(ru / rt * 100):.2f}%" if rt else None,
-                "vol_used": f"{_bytes_to_gb(vu):.2f} GB",
-                "vol_total": f"{_bytes_to_gb(vt):.2f} GB",
-                "vol_pct": f"{(vu / vt * 100):.2f}%" if vt else None,
-            }
+        out = subprocess.check_output(["df", "-h", mount], text=True).strip().splitlines()
+        if len(out) < 2:
+            return (None, None, None)
+        parts = out[1].split()
+        # Filesystem Size Used Avail Use% Mounted on
+        total = parts[1]
+        used = parts[2]
+        pct = parts[4]
+        return (used, total, pct)
     except Exception:
-        return _empty_disk()
+        return (None, None, None)
+
+def get_latest_disk_status():
+    # Root filesystem is always "/"
+    root_used, root_total, root_pct = _df_usage("/")
+
+    # Try common DigitalOcean volume mount points (first one that exists/works wins)
+    vol_used = vol_total = vol_pct = None
+    for mount in ("/mnt/volume", "/volume", "/mnt", "/data"):
+        u, t, p = _df_usage(mount)
+        if u and t and p:
+            vol_used, vol_total, vol_pct = u, t, p
+            break
+
+    return {
+        "root_used": root_used,
+        "root_total": root_total,
+        "root_pct": root_pct,
+        "vol_used": vol_used,
+        "vol_total": vol_total,
+        "vol_pct": vol_pct,
+    }
 
 
 HEADER_HTML = """
@@ -100,6 +99,9 @@ HEADER_HTML = """
     <div class="topnav">
       <a class="tab {% if active_page=='options' %}active{% endif %}" href="{{ url_for('index') }}">
         Option Info
+      </a>
+      <a class="tab {% if active_page=='historical' %}active{% endif %}" href="/historical">
+        Historical Options
       </a>
       <a class="tab {% if active_page=='storage' %}active{% endif %}" href="{{ url_for('storage_dashboard') }}">
         Storage Graph
@@ -290,5 +292,6 @@ def index():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
+
 
 
