@@ -10,6 +10,9 @@ HEADER_HTML = r"""
       <a class="tab {% if active_page=='options' %}active{% endif %}" href="{{ url_for('index') }}">
         Option Info
       </a>
+      <a class="tab {% if active_page=='historical' %}active{% endif %}" href="/historical">
+        Historical Options
+      </a>
       <a class="tab {% if active_page=='storage' %}active{% endif %}" href="{{ url_for('storage_dashboard') }}">
         Storage Graph
       </a>
@@ -22,6 +25,13 @@ HEADER_HTML = r"""
       <code>disk_usage_daily</code>.
     </div>
   </div>
+
+  <div class="pill">
+    Latest snapshot: <code>{{ latest_date or "—" }}</code>
+  </div>
+</div>
+"""
+
 
   <div class="pill">
     Latest snapshot: <code>{{ latest_date or "—" }}</code>
