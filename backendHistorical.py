@@ -12,7 +12,7 @@ LOG_FILE_ADDRESS = os.path.join(os.getcwd(), 'tradier_log.txt')
 PG_DSN_HIST = os.environ["PG_DSN_HIST"]
 
 start_date = datetime(2025, 1, 1)
-end_date = datetime(2025, 1, 10)
+end_date = datetime(2025, 1, 6)
 beginStrike = 1
 endStrike = 1000
 timeBetween = 0.8
