@@ -1,5 +1,6 @@
 from flask import Flask, request, render_template_string, Response, url_for
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import ProgrammingError
 import os
 import csv
 import io
@@ -210,6 +211,37 @@ TABLE_PAGE = """
 </html>
 """
 
+EMPTY_TABLE_PAGE = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Options</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='options.css') }}">
+</head>
+<body>
+  <div class="container">
+    """ + HEADER_HTML + """
+    <div class="card">
+      <div class="empty">
+        No data yet. The table <code>option_chain_eod</code> does not exist.
+        Run <code>backendOptions.py</code> once to create it and insert rows.
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+def _is_missing_table_error(e: Exception) -> bool:
+    # Works for psycopg2: sqlalchemy.exc.ProgrammingError wraps psycopg2.errors.UndefinedTable
+    orig = getattr(e, "orig", None)
+    if orig is not None and orig.__class__.__name__ == "UndefinedTable":
+        return True
+    msg = str(e).lower()
+    return "does not exist" in msg and "relation" in msg
+
 @app.route("/", methods=["GET"])
 def index():
     filters = {}
@@ -248,8 +280,17 @@ def index():
     LIMIT :limit
     """
 
-    with engine.connect() as conn:
-        rows = [dict(r._mapping) for r in conn.execute(text(sql), params)]
+    try:
+        with engine.connect() as conn:
+            rows = [dict(r._mapping) for r in conn.execute(text(sql), params)]
+    except ProgrammingError as e:
+        if _is_missing_table_error(e):
+            return render_template_string(
+                EMPTY_TABLE_PAGE,
+                active_page="options",
+                disk=get_latest_disk_status(),
+            )
+        raise
 
     if request.args.get("format") == "csv":
         output = io.StringIO()
