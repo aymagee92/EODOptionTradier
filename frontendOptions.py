@@ -26,6 +26,7 @@ TABLE = "option_chain_eod"
 COLUMNS = [
     "symbol",
     "quotedate",
+    "runtime",
     "underlyinglast",
     "expiredate",
     "callvolume",
@@ -352,7 +353,6 @@ EMPTY_TABLE_PAGE = """
 """
 
 def _is_missing_table_error(e: Exception) -> bool:
-    # Works for psycopg2: sqlalchemy.exc.ProgrammingError wraps psycopg2.errors.UndefinedTable
     orig = getattr(e, "orig", None)
     if orig is not None and orig.__class__.__name__ == "UndefinedTable":
         return True
@@ -383,7 +383,7 @@ def index():
     order_sql = (
         "ORDER BY " + ", ".join(f"{c} {d}" for c, d in sorts.items())
         if sorts
-        else "ORDER BY quotedate DESC, symbol ASC, expiredate ASC, strike ASC"
+        else "ORDER BY quotedate DESC, runtime DESC, symbol ASC, expiredate ASC, strike ASC"
     )
 
     limit = int(request.args.get("limit", 100))
@@ -434,6 +434,5 @@ def index():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
-
 
 
