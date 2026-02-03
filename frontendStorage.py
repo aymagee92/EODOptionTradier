@@ -1,9 +1,6 @@
-# ============================
-# FILE 1: frontendStorage
-# ============================
-
 from flask import render_template_string, url_for
-from sqlalchemy import text
+from sqlalchemy import text, create_engine
+import os
 
 HEADER_HTML = r"""
 <div class="header">
@@ -103,6 +100,14 @@ def _bytes_to_gb(x: int) -> float:
     return float(x) / (1024.0 ** 3)
 
 def register_storage_routes(app, engine):
+    """
+    IMPORTANT CHANGE:
+    - storage snapshots should be droplet-wide and shared
+    - always read disk_usage_daily from PG_DSN (main DB), not from whatever engine
+      the caller is using (like PG_DSN_HIST)
+    """
+    storage_engine = create_engine(os.environ["PG_DSN"], pool_pre_ping=True)
+
     @app.route("/storage", methods=["GET"])
     def storage_dashboard():
         sql = """
@@ -115,7 +120,7 @@ def register_storage_routes(app, engine):
         FROM disk_usage_daily
         ORDER BY captured_at::date ASC
         """
-        with engine.connect() as conn:
+        with storage_engine.connect() as conn:
             rows = [dict(r._mapping) for r in conn.execute(text(sql))]
 
         points = []
@@ -158,4 +163,3 @@ def register_storage_routes(app, engine):
             vol_pct=vol_pct,
             latest_date=latest_date,
         )
-
