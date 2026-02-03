@@ -18,7 +18,13 @@ log = logging.getLogger("EOD")
 # ----------------------------
 # CONFIG
 # ----------------------------
-TICKERS = ["AAPL", "MSFT", "TSLA", "AMD"]
+# Renamed from TICKERS -> frontendTickers and made env-overridable.
+# Set like: export FRONTEND_TICKERS="AAPL,MSFT,TSLA,AMD"
+frontendTickers = [
+    t.strip()
+    for t in os.environ.get("FRONTEND_TICKERS", "AAPL,MSFT,TSLA,AMD").split(",")
+    if t.strip()
+]
 
 TRADIER_TOKEN = os.environ["TRADIER_ACCESS_TOKEN"]
 PG_DSN = os.environ["PG_DSN"]
@@ -230,9 +236,14 @@ def run_eod():
 
     run_date = date.today()
     run_time = current_runtime_hhmmss()
-    log.info("RUN START | %s tickers | run_date=%s run_time=%s", len(TICKERS), run_date.isoformat(), run_time)
+    log.info(
+        "RUN START | %s tickers | run_date=%s run_time=%s",
+        len(frontendTickers),
+        run_date.isoformat(),
+        run_time
+    )
 
-    for tickers_batch in chunked(TICKERS, TICKERS_PER_BATCH):
+    for tickers_batch in chunked(frontendTickers, TICKERS_PER_BATCH):
         for ticker in tickers_batch:
             t0 = time.time()
             try:
@@ -339,7 +350,3 @@ def run_eod():
 
 if __name__ == "__main__":
     run_eod()
-
-
-
-
