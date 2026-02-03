@@ -204,8 +204,7 @@ HEADER_HTML = """
          href="{{ url_for('storage_dashboard') }}">
         Storage Graph
       </a>
-      <a class="tab {% if active_page=='stockdata' %}active{% endif %}"
-         href="{{ url_for('stockdata') }}">
+      <a class="tab {% if active_page=='stockdata' %}active{% endif %}" href="/stockdata">
         Stock Data
       </a>
     </div>
