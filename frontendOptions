@@ -6,12 +6,14 @@ import io
 from decimal import Decimal
 
 from frontendStorage import register_storage_routes
+from frontendHistorical import register_historical_routes
 
 app = Flask(__name__, static_folder="static")
 engine = create_engine(os.environ["PG_DSN"], pool_pre_ping=True)
 
-# Register /storage route from frontendStorage (same port, same app)
+# Register shared routes (same app, same port)
 register_storage_routes(app, engine)
+register_historical_routes(app)
 
 TABLE = "option_chain_eod"
 
@@ -34,7 +36,6 @@ COLUMNS = [
     "dte",
 ]
 
-
 def fmt(v):
     if v is None:
         return ""
@@ -46,35 +47,24 @@ def fmt(v):
         return f"{v:.2f}"
     return str(v)
 
-
 # -------------------------
 # Disk status (droplet-wide, OS-level)
 # -------------------------
 import subprocess
 
 def _df_usage(mount: str):
-    """
-    Returns (used, total, pct) strings for a mount point using `df -h`.
-    Example: ('18G', '48G', '39%')
-    """
     try:
         out = subprocess.check_output(["df", "-h", mount], text=True).strip().splitlines()
         if len(out) < 2:
             return (None, None, None)
         parts = out[1].split()
-        # Filesystem Size Used Avail Use% Mounted on
-        total = parts[1]
-        used = parts[2]
-        pct = parts[4]
-        return (used, total, pct)
+        return (parts[2], parts[1], parts[4])
     except Exception:
         return (None, None, None)
 
 def get_latest_disk_status():
-    # Root filesystem is always "/"
     root_used, root_total, root_pct = _df_usage("/")
 
-    # Try common DigitalOcean volume mount points (first one that exists/works wins)
     vol_used = vol_total = vol_pct = None
     for mount in ("/mnt/volume", "/volume", "/mnt", "/data"):
         u, t, p = _df_usage(mount)
@@ -90,7 +80,6 @@ def get_latest_disk_status():
         "vol_total": vol_total,
         "vol_pct": vol_pct,
     }
-
 
 HEADER_HTML = """
 <div class="header">
@@ -140,13 +129,8 @@ TABLE_PAGE = """
             <input type="number" name="limit" value="{{ limit }}" min="1" max="50000" />
           </div>
 
-          <button class="btn ghost" type="button" id="clearBtn" title="Clear filters & sorts">
-            ✕ Clear all
-          </button>
-
-          <button class="btn ghost" type="button" id="clearSortsBtn" title="Clear sorts only">
-            ↕ Clear sorts
-          </button>
+          <button class="btn ghost" type="button" id="clearBtn">✕ Clear all</button>
+          <button class="btn ghost" type="button" id="clearSortsBtn">↕ Clear sorts</button>
 
           <div class="small">Filters & sorts are applied via URL (GET).</div>
         </div>
@@ -162,13 +146,13 @@ TABLE_PAGE = """
           {% if filters.get(col) %}
             <span class="chip filter" data-kind="filter" data-col="{{ col }}">
               Filter <b>{{ col }}</b>: {{ filters.get(col) }}
-              <span class="x" role="button" tabindex="0" title="Remove">×</span>
+              <span class="x">×</span>
             </span>
           {% endif %}
           {% if sorts.get(col) %}
             <span class="chip sort" data-kind="sort" data-col="{{ col }}">
               Sort <b>{{ col }}</b>: {{ '▲' if sorts.get(col)=='asc' else '▼' }}
-              <span class="x" role="button" tabindex="0" title="Remove">×</span>
+              <span class="x">×</span>
             </span>
           {% endif %}
         {% endfor %}
@@ -184,10 +168,8 @@ TABLE_PAGE = """
                   <div class="th-top">
                     <input type="text" name="f_{{ col }}" value="{{ filters.get(col,'') }}" placeholder="Filter…" />
                   </div>
-
                   <input type="hidden" name="s_{{ col }}" value="{{ s }}">
-
-                  <div class="th-bottom" data-action="sort" title="Click to sort">
+                  <div class="th-bottom" data-action="sort">
                     <span>{{ col }}</span>
                     <span class="sort-ind">
                       {% if s=='asc' %}▲{% elif s=='desc' %}▼{% else %}↕{% endif %}
@@ -202,7 +184,7 @@ TABLE_PAGE = """
             {% for row in rows %}
               <tr>
                 {% for col in columns %}
-                  <td class="{% if col in ['symbol'] %}mono{% endif %}">
+                  <td class="{% if col=='symbol' %}mono{% endif %}">
                     {{ fmt(row.get(col)) }}
                   </td>
                 {% endfor %}
@@ -242,15 +224,13 @@ def index():
         if sval in ("asc", "desc"):
             sorts[col] = sval
 
-    where_sql = ""
-    if where_clauses:
-        where_sql = "WHERE " + " AND ".join(where_clauses)
+    where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
-    if sorts:
-        order_parts = [f"{col} {direction}" for col, direction in sorts.items()]
-        order_sql = "ORDER BY " + ", ".join(order_parts)
-    else:
-        order_sql = "ORDER BY quotedate DESC, symbol ASC, expiredate ASC, strike ASC"
+    order_sql = (
+        "ORDER BY " + ", ".join(f"{c} {d}" for c, d in sorts.items())
+        if sorts
+        else "ORDER BY quotedate DESC, symbol ASC, expiredate ASC, strike ASC"
+    )
 
     limit = int(request.args.get("limit", 100))
     params["limit"] = limit
@@ -264,8 +244,7 @@ def index():
     """
 
     with engine.connect() as conn:
-        result = conn.execute(text(sql), params)
-        rows = [dict(r._mapping) for r in result]
+        rows = [dict(r._mapping) for r in conn.execute(text(sql), params)]
 
     if request.args.get("format") == "csv":
         output = io.StringIO()
