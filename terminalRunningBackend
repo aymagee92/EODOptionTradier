@@ -1,0 +1,3 @@
+cd ~/options_eod_backend/EODOptionTradier
+source ~/options_eod_backend/.venv/bin/activate
+python backendOptions.py
