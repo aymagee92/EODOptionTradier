@@ -1,15 +1,16 @@
 # =========================================================
-# TROUBLESHOOT SETUP – MANUAL RUN (NO CRON)
-# Goal: setup system + Postgres on volume + create BOTH DBs
-#       then run ONLY the frontend (no backends yet)
+# ONE-TIME SETUP – NO BACKENDS, FRONTEND ONLY
+# Goal:
+#   - Setup system
+#   - Move Postgres to volume
+#   - Create BOTH databases
+#   - Run frontend on :8000
 #
-# Frontend (single app on :8000) will serve:
+# Frontend routes:
 #   /           (options)
 #   /storage    (storage dashboard)
 #   /historical (historical options)
 # =========================================================
-
-set -e
 
 # ───────────────────────────────────────────────
 # SYSTEM UPDATE
@@ -17,17 +18,17 @@ set -e
 sudo apt update && sudo apt upgrade -y
 
 # ───────────────────────────────────────────────
-# TIME ZONE (EASTERN)
+# TIME ZONE
 # ───────────────────────────────────────────────
 sudo timedatectl set-timezone America/New_York
 
 # ───────────────────────────────────────────────
-# PYTHON + ESSENTIALS + POSTGRES
+# PACKAGES
 # ───────────────────────────────────────────────
 sudo apt install -y python3 python3-pip python3-venv build-essential git postgresql postgresql-contrib
 
 # ───────────────────────────────────────────────
-# PROJECT DIRECTORY + VIRTUAL ENV
+# PROJECT + VENV
 # ───────────────────────────────────────────────
 cd ~
 mkdir -p options_eod_backend
@@ -35,14 +36,11 @@ cd options_eod_backend
 python3 -m venv .venv
 source .venv/bin/activate
 
-# ───────────────────────────────────────────────
-# PYTHON LIBRARIES
-# ───────────────────────────────────────────────
 pip install --upgrade pip wheel
 pip install requests pandas sqlalchemy psycopg2-binary flask
 
 # ───────────────────────────────────────────────
-# CONFIRM VOLUME MOUNT
+# DETECT VOLUME
 # ───────────────────────────────────────────────
 lsblk
 df -h
@@ -51,7 +49,7 @@ VOL_MNT="$(df -B1 --output=target,size | awk 'NR>1 && $1!="/" {print $2, $1}' | 
 echo "Detected volume mount: ${VOL_MNT}"
 
 # ───────────────────────────────────────────────
-# MOVE POSTGRES DATA TO VOLUME
+# MOVE POSTGRES TO VOLUME
 # ───────────────────────────────────────────────
 sudo systemctl stop postgresql || true
 
@@ -70,7 +68,7 @@ sudo sed -i "s|^#\?listen_addresses =.*|listen_addresses = 'localhost'|" \
 sudo systemctl start postgresql
 
 # ───────────────────────────────────────────────
-# CREATE ROLE + DATABASES
+# DATABASES + ROLE
 # ───────────────────────────────────────────────
 DB_USER="options_ingest"
 DB_NAME="options_eod"
@@ -108,11 +106,15 @@ sudo sed -i "6ihost    ${DB_NAME}        ${DB_USER}   ::1/128        trust" "$PG
 sudo systemctl reload postgresql
 
 # ───────────────────────────────────────────────
-# ENVIRONMENT VARIABLES
+# PERSISTENT ENV VARS (VERY IMPORTANT)
 # ───────────────────────────────────────────────
+grep -qxF 'export PG_DSN=' ~/.bashrc || cat <<EOF >> ~/.bashrc
 export PG_DSN="postgresql+psycopg2://${DB_USER}@localhost:5432/${DB_NAME}"
 export PG_DSN_HIST="postgresql+psycopg2://${DB_USER}@localhost:5432/${DB_NAME_HIST}"
 export TRADIER_ACCESS_TOKEN="OUOFRjuCoP5C3uSBni56tOdaUhOG"
+EOF
+
+source ~/.bashrc
 
 # ───────────────────────────────────────────────
 # CLONE REPO
@@ -150,6 +152,3 @@ IP="$(curl -s ifconfig.me)"
 echo "Options Frontend:    http://$IP:8000"
 echo "Storage Dashboard:   http://$IP:8000/storage"
 echo "Historical Options:  http://$IP:8000/historical"
-
-
-
