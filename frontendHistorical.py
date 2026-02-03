@@ -1,5 +1,6 @@
 from flask import request, render_template_string, Response, url_for
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import ProgrammingError
 import os
 import csv
 import io
@@ -171,6 +172,36 @@ TABLE_PAGE = """
 </html>
 """
 
+EMPTY_TABLE_PAGE = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Historical Options</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='options.css') }}">
+</head>
+<body>
+  <div class="container">
+    """ + HEADER_HTML + """
+    <div class="card">
+      <div class="empty">
+        No data yet. The table <code>option_history_eod</code> does not exist.
+        Run <code>backendHistorical.py</code> once to create it and insert rows.
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+def _is_missing_table_error(e: Exception) -> bool:
+    orig = getattr(e, "orig", None)
+    if orig is not None and orig.__class__.__name__ == "UndefinedTable":
+        return True
+    msg = str(e).lower()
+    return "does not exist" in msg and "relation" in msg
+
 # -------------------------
 # ROUTE REGISTRATION
 # -------------------------
@@ -188,8 +219,17 @@ def register_historical_routes(app):
         LIMIT :limit
         """
 
-        with engine_hist.connect() as conn:
-            rows = [dict(r._mapping) for r in conn.execute(text(sql), {"limit": limit})]
+        try:
+            with engine_hist.connect() as conn:
+                rows = [dict(r._mapping) for r in conn.execute(text(sql), {"limit": limit})]
+        except ProgrammingError as e:
+            if _is_missing_table_error(e):
+                return render_template_string(
+                    EMPTY_TABLE_PAGE,
+                    limit=limit,
+                    disk=get_latest_disk_status(),
+                )
+            raise
 
         if request.args.get("format") == "csv":
             output = io.StringIO()
