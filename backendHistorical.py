@@ -8,12 +8,15 @@ from psycopg2.extras import execute_values
 
 ACCESS_TOKEN = os.environ.get("ACCESS_TOKEN", "OUOFRjuCoP5C3uSBni56tOdaUhOG")
 INTERVAL = os.environ.get("INTERVAL", "daily")
-LOG_FILE_ADDRESS = os.path.join(os.getcwd(), 'tradier_log.txt')
+LOG_FILE_ADDRESS = os.path.join(os.getcwd(), "tradier_log.txt")
 PG_DSN_HIST = os.environ["PG_DSN_HIST"]
 
 start_date = datetime.fromisoformat(os.environ.get("START_DATE", "2025-01-01"))
-end_date = datetime.fromisoformat(os.environ.get("END_DATE", "2025-01-06"))
-backendTicker = os.environ.get("BACKEND_TICKER", "AAPL")
+end_date   = datetime.fromisoformat(os.environ.get("END_DATE", "2025-01-06"))
+
+# RENAMED: backendTicker -> historicalTicker
+historicalTicker = os.environ.get("HISTORICAL_TICKER", "AAPL")
+
 beginStrike = int(os.environ.get("BEGIN_STRIKE", "1"))
 endStrike   = int(os.environ.get("END_STRIKE", "1000"))
 timeBetween = float(os.environ.get("TIME_BETWEEN", "0.8"))
@@ -83,46 +86,57 @@ def upsert_rows(engine, rows):
         with raw.cursor() as cur:
             execute_values(cur, sql, tuples, page_size=2000)
 
-def connectToTradierHistory(backendTicker, startDate, endDate):
+def connectToTradierHistory(symbol, startDate, endDate):
     response = requests.get(
-        'https://api.tradier.com/v1/markets/history',
-        params={'symbol': backendTicker, 'interval': INTERVAL, 'start': startDate, 'end': endDate},
-        headers={'Authorization': f'Bearer {ACCESS_TOKEN}', 'Accept': 'application/json'}
+        "https://api.tradier.com/v1/markets/history",
+        params={"symbol": symbol, "interval": INTERVAL, "start": startDate, "end": endDate},
+        headers={"Authorization": f"Bearer {ACCESS_TOKEN}", "Accept": "application/json"},
     )
     if response.status_code != 200:
         return None
     json_response = response.json()
-    if 'history' in json_response and json_response['history'] is not None:
-        return json_response['history']
+    if "history" in json_response and json_response["history"] is not None:
+        return json_response["history"]
     return None
 
 def getStockCloseOnDate(symbol, d):
     response = requests.get(
-        'https://api.tradier.com/v1/markets/history',
-        params={'symbol': symbol, 'interval': INTERVAL,
-                'start': d.strftime('%Y-%m-%d'), 'end': d.strftime('%Y-%m-%d')},
-        headers={'Authorization': f'Bearer {ACCESS_TOKEN}', 'Accept': 'application/json'}
+        "https://api.tradier.com/v1/markets/history",
+        params={
+            "symbol": symbol,
+            "interval": INTERVAL,
+            "start": d.strftime("%Y-%m-%d"),
+            "end": d.strftime("%Y-%m-%d"),
+        },
+        headers={"Authorization": f"Bearer {ACCESS_TOKEN}", "Accept": "application/json"},
     )
     json_response = response.json()
 
-    if ('history' in json_response and json_response['history'] is not None and
-        'day' in json_response['history'] and json_response['history']['day'] is not None):
-        day = json_response['history']['day']
-        if isinstance(day, list) and len(day) > 0 and 'close' in day[0]:
-            return float(day[0]['close'])
-        if isinstance(day, dict) and 'close' in day:
-            return float(day['close'])
+    if (
+        "history" in json_response
+        and json_response["history"] is not None
+        and "day" in json_response["history"]
+        and json_response["history"]["day"] is not None
+    ):
+        day = json_response["history"]["day"]
+        if isinstance(day, list) and len(day) > 0 and "close" in day[0]:
+            return float(day[0]["close"])
+        if isinstance(day, dict) and "close" in day:
+            return float(day["close"])
     return None
 
 def printAndLog(log_message):
-    logging.basicConfig(filename=LOG_FILE_ADDRESS, level=logging.INFO,
-                        format='%(asctime)s - %(message)s')
+    logging.basicConfig(
+        filename=LOG_FILE_ADDRESS,
+        level=logging.INFO,
+        format="%(asctime)s - %(message)s",
+    )
     logging.info(log_message)
     print(log_message)
 
 def buildOCC(symbol, exp_date, call_put, strike):
     strike_int = int(strike * 1000)
-    return symbol + exp_date.strftime('%y%m%d') + call_put + str(strike_int).zfill(8)
+    return symbol + exp_date.strftime("%y%m%d") + call_put + str(strike_int).zfill(8)
 
 def isTradingDay(d):
     return d.weekday() < 5
@@ -146,9 +160,9 @@ def getCandidateExpirations(start_date, end_date, include_intraweek=True):
 def normalize_days(history_obj):
     if history_obj is None:
         return []
-    if 'day' not in history_obj or history_obj['day'] is None:
+    if "day" not in history_obj or history_obj["day"] is None:
         return []
-    day = history_obj['day']
+    day = history_obj["day"]
     if isinstance(day, dict):
         return [day]
     if isinstance(day, list):
@@ -156,19 +170,15 @@ def normalize_days(history_obj):
     return []
 
 def historyDaysToRows(underlying_symbol, exp_date, strike, call_put, history_obj):
-    """
-    - underlyingLast is left as None for now.
-    - We fill underlyingLast later, AFTER all data is stored, based on quoteDate.
-    """
     rows = []
     expireDate = exp_date.date()
     days = normalize_days(history_obj)
 
     for d in days:
-        if 'date' not in d:
+        if "date" not in d:
             continue
 
-        quoteDate = date.fromisoformat(d['date'])
+        quoteDate = date.fromisoformat(d["date"])
         dte = (expireDate - quoteDate).days
 
         row = {
@@ -193,17 +203,17 @@ def historyDaysToRows(underlying_symbol, exp_date, strike, call_put, history_obj
 
             "itmPercCalls": None,
             "itmPercPuts": None,
-            "dte": dte
+            "dte": dte,
         }
 
-        if call_put == 'C':
+        if call_put == "C":
             row["callOpen"] = d.get("open")
             row["callHigh"] = d.get("high")
             row["callLow"] = d.get("low")
             row["callClose"] = d.get("close")
             row["callVolume"] = d.get("volume")
 
-        if call_put == 'P':
+        if call_put == "P":
             row["putOpen"] = d.get("open")
             row["putHigh"] = d.get("high")
             row["putLow"] = d.get("low")
@@ -214,42 +224,8 @@ def historyDaysToRows(underlying_symbol, exp_date, strike, call_put, history_obj
 
     return rows
 
-def expirationLooksValid(symbol, exp_date):
-    print("checking expiration date:", exp_date.strftime('%Y-%m-%d'))
-    stockPriceOnExpDate = getStockCloseOnDate(symbol, exp_date)
-    if stockPriceOnExpDate is None:
-        print("no stock price found for date, skipping expiration")
-        return False
-
-    print("stock price on expiration date:", stockPriceOnExpDate)
-    atm = int(round(stockPriceOnExpDate))
-
-    strikes_tested = []
-    total = 21
-    i = 0
-    startDate = (exp_date - timedelta(days=31)).strftime('%Y-%m-%d')
-    endDate = exp_date.strftime('%Y-%m-%d')
-
-    for strike in range(atm - 10, atm + 11):
-        i += 1
-        strikes_tested.append(strike)
-        print(f"{i}/{total} testing strike {strike}", end="\r", flush=True)
-
-        occ = buildOCC(symbol, exp_date, 'C', strike)
-        result = connectToTradierHistory(occ, startDate, endDate)
-        if result:
-            print(" " * 60, end="\r")
-            print("expiration accepted, tested strikes:", strikes_tested)
-            return True
-
-        time.sleep(0.25)
-
-    print(" " * 60, end="\r")
-    print("expiration rejected, tested strikes:", strikes_tested)
-    return False
-
 # ----------------------------
-# NEW: reject duplicate tickers (run historical once per ticker)
+# NEW: reject duplicate tickers
 # ----------------------------
 def ticker_already_loaded(engine, symbol: str) -> bool:
     sql = "SELECT 1 FROM option_history_eod WHERE symbol = :sym LIMIT 1"
@@ -315,53 +291,54 @@ def update_underlying_last(engine, symbol: str, close_map: dict):
                 sql,
                 triples,
                 template="(%s::text, %s::date, %s::numeric)",
-                page_size=2000
+                page_size=2000,
             )
 
-# --- BEGINNING OF CODE ---
+# ----------------------------
+# MAIN EXECUTION
+# ----------------------------
 engine = get_engine()
 ensure_schema(engine)
 
-# NEW: reject duplicate tickers BEFORE doing any API work
-if ticker_already_loaded(engine, backendTicker):
-    print(f"[SKIP] {backendTicker} already exists in option_history_eod. Exiting to avoid duplicate run.")
+if ticker_already_loaded(engine, historicalTicker):
+    print(f"[SKIP] {historicalTicker} already exists in option_history_eod. Exiting.")
     raise SystemExit(0)
 
 expirations = getCandidateExpirations(start_date, end_date, True)
 
 for exp_date in expirations:
-    if not expirationLooksValid(backendTicker, exp_date):
-        printAndLog("NOTHING EXPIRATION " + exp_date.strftime('%Y-%m-%d'))
+    if not expirationLooksValid(historicalTicker, exp_date):
+        printAndLog("NOTHING EXPIRATION " + exp_date.strftime("%Y-%m-%d"))
         continue
 
-    startDate = (exp_date - timedelta(days=31)).strftime('%Y-%m-%d')
-    endDate = exp_date.strftime('%Y-%m-%d')
+    startDate = (exp_date - timedelta(days=31)).strftime("%Y-%m-%d")
+    endDate = exp_date.strftime("%Y-%m-%d")
 
-    total = (endStrike * 2)
+    total = endStrike * 2
     count = 0
-    for call_put in ['C', 'P']:
-        for strike in range(beginStrike, endStrike+1):
+
+    for call_put in ["C", "P"]:
+        for strike in range(beginStrike, endStrike + 1):
             count += 1
             print(f"{count}/{total} testing {call_put} strike {strike}", end="\r", flush=True)
 
-            occ = buildOCC(backendTicker, exp_date, call_put, strike)
+            occ = buildOCC(historicalTicker, exp_date, call_put, strike)
             result = connectToTradierHistory(occ, startDate, endDate)
 
             if result:
                 print(" " * 80, end="\r")
-                print("success", exp_date.strftime('%Y-%m-%d'), call_put, "strike", strike)
+                print("success", exp_date.strftime("%Y-%m-%d"), call_put, "strike", strike)
 
-                rows = historyDaysToRows(backendTicker, exp_date, strike, call_put, result)
+                rows = historyDaysToRows(historicalTicker, exp_date, strike, call_put, result)
                 upsert_rows(engine, rows)
 
             time.sleep(timeBetween)
 
-# After all option rows are stored, fill underlyingLast based on quoteDate.
-min_qd, max_qd = get_quote_date_range(engine, backendTicker)
+min_qd, max_qd = get_quote_date_range(engine, historicalTicker)
 if min_qd and max_qd:
-    print(f"Filling underlyingLast for {backendTicker}: {min_qd} -> {max_qd}")
-    close_map = get_underlying_close_map_for_range(backendTicker, min_qd, max_qd)
-    update_underlying_last(engine, backendTicker, close_map)
+    print(f"Filling underlyingLast for {historicalTicker}: {min_qd} -> {max_qd}")
+    close_map = get_underlying_close_map_for_range(historicalTicker, min_qd, max_qd)
+    update_underlying_last(engine, historicalTicker, close_map)
     print("Done updating underlyingLast.")
 else:
     print("No rows found; nothing to update.")
