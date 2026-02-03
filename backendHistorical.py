@@ -150,7 +150,6 @@ def normalize_days(history_obj):
 
 def historyDaysToRows(underlying_symbol, exp_date, strike, call_put, history_obj):
     """
-    IMPORTANT CHANGE:
     - underlyingLast is left as None for now.
     - We fill underlyingLast later, AFTER all data is stored, based on quoteDate.
     """
@@ -243,7 +242,15 @@ def expirationLooksValid(symbol, exp_date):
     return False
 
 # ----------------------------
-# NEW: after-the-fact filling of underlyingLast
+# NEW: reject duplicate tickers (run historical once per ticker)
+# ----------------------------
+def ticker_already_loaded(engine, symbol: str) -> bool:
+    sql = "SELECT 1 FROM option_history_eod WHERE symbol = :sym LIMIT 1"
+    with engine.connect() as conn:
+        return conn.execute(text(sql), {"sym": symbol}).fetchone() is not None
+
+# ----------------------------
+# After-the-fact filling of underlyingLast
 # ----------------------------
 def get_quote_date_range(engine, symbol: str):
     sql = """
@@ -304,55 +311,16 @@ def update_underlying_last(engine, symbol: str, close_map: dict):
                 page_size=2000
             )
 
-# ----------------------------
-# NEW: droplet-wide disk usage (Root + Volume) via OS, not Postgres
-# ----------------------------
-import subprocess
-
-def _df_usage(mount: str):
-    """
-    Returns (used, total, pct) strings for a mount point using `df -h`.
-    Example: ('18G', '48G', '39%')
-    """
-    try:
-        out = subprocess.check_output(["df", "-h", mount], text=True).strip().splitlines()
-        if len(out) < 2:
-            return (None, None, None)
-        parts = out[1].split()
-        # Filesystem Size Used Avail Use% Mounted on
-        total = parts[1]
-        used = parts[2]
-        pct = parts[4]
-        return (used, total, pct)
-    except Exception:
-        return (None, None, None)
-
-def get_latest_disk_status():
-    # Root filesystem is always "/"
-    root_used, root_total, root_pct = _df_usage("/")
-
-    # Try common DigitalOcean volume mount points
-    vol_used = vol_total = vol_pct = None
-    for mount in ("/mnt/volume", "/volume", "/mnt", "/data"):
-        u, t, p = _df_usage(mount)
-        if u and t and p:
-            vol_used, vol_total, vol_pct = u, t, p
-            break
-
-    return {
-        "root_used": root_used,
-        "root_total": root_total,
-        "root_pct": root_pct,
-        "vol_used": vol_used,
-        "vol_total": vol_total,
-        "vol_pct": vol_pct,
-    }
-
 # --- BEGINNING OF CODE ---
 engine = get_engine()
 ensure_schema(engine)
 
 ticker = 'AAPL'
+
+# NEW: reject duplicate tickers BEFORE doing any API work
+if ticker_already_loaded(engine, ticker):
+    print(f"[SKIP] {ticker} already exists in option_history_eod. Exiting to avoid duplicate run.")
+    raise SystemExit(0)
 
 start_date = datetime(2025, 1, 1)
 end_date = datetime(2025, 1, 10)
@@ -395,4 +363,5 @@ if min_qd and max_qd:
     print("Done updating underlyingLast.")
 else:
     print("No rows found; nothing to update.")
+
 
