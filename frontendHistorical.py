@@ -424,6 +424,7 @@ def register_historical_routes(app):
 
         return render_template_string(
             TABLE_PAGE,
+            active_page = "historical",
             rows=rows,
             columns=COLUMNS,
             filters=filters,
