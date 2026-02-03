@@ -226,9 +226,8 @@ HEADER_HTML = """
 </div>
 """
 
-
 # -------------------------
-# PAGE TEMPLATE
+# PAGE TEMPLATE (UPDATED: filters + sorts + chips + clear buttons)
 # -------------------------
 TABLE_PAGE = """
 <!doctype html>
@@ -244,19 +243,40 @@ TABLE_PAGE = """
     """ + HEADER_HTML + """
 
     <form id="qform" method="get" class="card">
-
       <div class="controls">
         <div class="controls-left">
           <div class="field">
             <span>Rows</span>
             <input type="number" name="limit" value="{{ limit }}" min="1" max="50000" />
           </div>
+
+          <button class="btn ghost" type="button" id="clearBtn">✕ Clear all</button>
+          <button class="btn ghost" type="button" id="clearSortsBtn">↕ Clear sorts</button>
+
+          <div class="small">Filters & sorts are applied via URL (GET).</div>
         </div>
 
         <div class="controls-right">
-          <button class="btn primary" type="submit">Run</button>
+          <button class="btn primary" type="submit" name="format" value="html">Run</button>
           <button class="btn" type="submit" name="format" value="csv">Download CSV</button>
         </div>
+      </div>
+
+      <div class="chips" id="chips">
+        {% for col in columns %}
+          {% if filters.get(col) %}
+            <span class="chip filter" data-kind="filter" data-col="{{ col }}">
+              Filter <b>{{ col }}</b>: {{ filters.get(col) }}
+              <span class="x">×</span>
+            </span>
+          {% endif %}
+          {% if sorts.get(col) %}
+            <span class="chip sort" data-kind="sort" data-col="{{ col }}">
+              Sort <b>{{ col }}</b>: {{ '▲' if sorts.get(col)=='asc' else '▼' }}
+              <span class="x">×</span>
+            </span>
+          {% endif %}
+        {% endfor %}
       </div>
 
       <div class="table-wrap">
@@ -264,15 +284,30 @@ TABLE_PAGE = """
           <thead>
             <tr>
               {% for col in columns %}
-                <th>{{ col }}</th>
+                {% set s = sorts.get(col, '') %}
+                <th data-col="{{ col }}" data-sort="{{ s }}">
+                  <div class="th-top">
+                    <input type="text" name="f_{{ col }}" value="{{ filters.get(col,'') }}" placeholder="Filter…" />
+                  </div>
+                  <input type="hidden" name="s_{{ col }}" value="{{ s }}">
+                  <div class="th-bottom" data-action="sort">
+                    <span>{{ col }}</span>
+                    <span class="sort-ind">
+                      {% if s=='asc' %}▲{% elif s=='desc' %}▼{% else %}↕{% endif %}
+                    </span>
+                  </div>
+                </th>
               {% endfor %}
             </tr>
           </thead>
+
           <tbody>
             {% for row in rows %}
               <tr>
                 {% for col in columns %}
-                  <td>{{ fmt(row.get(col)) }}</td>
+                  <td class="{% if col=='symbol' %}mono{% endif %}">
+                    {{ fmt(row.get(col)) }}
+                  </td>
                 {% endfor %}
               </tr>
             {% endfor %}
@@ -281,7 +316,7 @@ TABLE_PAGE = """
       </div>
 
       <div class="footer-note">
-        Showing {{ rows|length }} row(s).
+        Showing {{ rows|length }} row(s). Scroll horizontally for more columns.
       </div>
     </form>
   </div>
@@ -329,18 +364,45 @@ def register_historical_routes(app):
 
     @app.route("/historical", methods=["GET"])
     def historical():
+        filters = {}
+        sorts = {}
+        where_clauses = []
+        params = {}
+
+        for col in COLUMNS:
+            fval = request.args.get(f"f_{col}")
+            sval = request.args.get(f"s_{col}")
+
+            if fval:
+                filters[col] = fval
+                where_clauses.append(f"{col}::text ILIKE :f_{col}")
+                params[f"f_{col}"] = f"%{fval}%"
+
+            if sval in ("asc", "desc"):
+                sorts[col] = sval
+
+        where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
+        order_sql = (
+            "ORDER BY " + ", ".join(f"{c} {d}" for c, d in sorts.items())
+            if sorts
+            else "ORDER BY quotedate DESC, symbol ASC, expiredate ASC, strike ASC"
+        )
+
         limit = int(request.args.get("limit", 100))
+        params["limit"] = limit
 
         sql = f"""
         SELECT {",".join(COLUMNS)}
         FROM {TABLE}
-        ORDER BY quotedate DESC, symbol ASC, expiredate ASC, strike ASC
+        {where_sql}
+        {order_sql}
         LIMIT :limit
         """
 
         try:
             with engine_hist.connect() as conn:
-                rows = [dict(r._mapping) for r in conn.execute(text(sql), {"limit": limit})]
+                rows = [dict(r._mapping) for r in conn.execute(text(sql), params)]
         except ProgrammingError as e:
             if _is_missing_table_error(e):
                 return render_template_string(
@@ -365,8 +427,9 @@ def register_historical_routes(app):
             TABLE_PAGE,
             rows=rows,
             columns=COLUMNS,
+            filters=filters,
+            sorts=sorts,
             limit=limit,
             fmt=fmt,
             disk=get_latest_disk_status(),
         )
-
