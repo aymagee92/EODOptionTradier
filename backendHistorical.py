@@ -11,6 +11,8 @@ INTERVAL = "daily"
 LOG_FILE_ADDRESS = os.path.join(os.getcwd(), 'tradier_log.txt')
 PG_DSN_HIST = os.environ["PG_DSN_HIST"]
 
+start_date = datetime(2025, 1, 1)
+end_date = datetime(2025, 1, 10)
 beginStrike = 1
 endStrike = 1000
 timeBetween = 0.8
@@ -325,9 +327,6 @@ ticker = 'AAPL'
 if ticker_already_loaded(engine, ticker):
     print(f"[SKIP] {ticker} already exists in option_history_eod. Exiting to avoid duplicate run.")
     raise SystemExit(0)
-
-start_date = datetime(2025, 1, 1)
-end_date = datetime(2025, 1, 10)
 
 expirations = getCandidateExpirations(start_date, end_date, True)
 
