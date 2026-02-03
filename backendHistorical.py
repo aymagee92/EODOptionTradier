@@ -168,7 +168,7 @@ def historyDaysToRows(underlying_symbol, exp_date, strike, call_put, history_obj
         row = {
             "symbol": underlying_symbol,
             "quoteDate": quoteDate,
-            "underlyingLast": None,     # <-- changed (was 100)
+            "underlyingLast": None,
             "expireDate": expireDate,
 
             "callVolume": None,
@@ -185,8 +185,8 @@ def historyDaysToRows(underlying_symbol, exp_date, strike, call_put, history_obj
             "putOpen": None,
             "putVolume": None,
 
-            "itmPercCalls": None,       # optional to fill later
-            "itmPercPuts": None,        # optional to fill later
+            "itmPercCalls": None,
+            "itmPercPuts": None,
             "dte": dte
         }
 
@@ -258,10 +258,6 @@ def get_quote_date_range(engine, symbol: str):
         return r[0], r[1]
 
 def get_underlying_close_map_for_range(symbol: str, start_d: date, end_d: date) -> dict:
-    """
-    One Tradier call for the underlying ticker for the whole quoteDate span.
-    Returns: { quoteDate(date obj) : close(float) }
-    """
     history_obj = connectToTradierHistory(
         symbol,
         start_d.strftime("%Y-%m-%d"),
@@ -283,11 +279,6 @@ def get_underlying_close_map_for_range(symbol: str, start_d: date, end_d: date) 
     return close_map
 
 def update_underlying_last(engine, symbol: str, close_map: dict):
-    """
-    Updates rows in Postgres:
-    - matches by (symbol, quoteDate)
-    - only fills where underlyingLast IS NULL
-    """
     if not close_map:
         return
 
@@ -313,6 +304,50 @@ def update_underlying_last(engine, symbol: str, close_map: dict):
                 page_size=2000
             )
 
+# ----------------------------
+# NEW: droplet-wide disk usage (Root + Volume) via OS, not Postgres
+# ----------------------------
+import subprocess
+
+def _df_usage(mount: str):
+    """
+    Returns (used, total, pct) strings for a mount point using `df -h`.
+    Example: ('18G', '48G', '39%')
+    """
+    try:
+        out = subprocess.check_output(["df", "-h", mount], text=True).strip().splitlines()
+        if len(out) < 2:
+            return (None, None, None)
+        parts = out[1].split()
+        # Filesystem Size Used Avail Use% Mounted on
+        total = parts[1]
+        used = parts[2]
+        pct = parts[4]
+        return (used, total, pct)
+    except Exception:
+        return (None, None, None)
+
+def get_latest_disk_status():
+    # Root filesystem is always "/"
+    root_used, root_total, root_pct = _df_usage("/")
+
+    # Try common DigitalOcean volume mount points
+    vol_used = vol_total = vol_pct = None
+    for mount in ("/mnt/volume", "/volume", "/mnt", "/data"):
+        u, t, p = _df_usage(mount)
+        if u and t and p:
+            vol_used, vol_total, vol_pct = u, t, p
+            break
+
+    return {
+        "root_used": root_used,
+        "root_total": root_total,
+        "root_pct": root_pct,
+        "vol_used": vol_used,
+        "vol_total": vol_total,
+        "vol_pct": vol_pct,
+    }
+
 # --- BEGINNING OF CODE ---
 engine = get_engine()
 ensure_schema(engine)
@@ -329,7 +364,6 @@ for exp_date in expirations:
         printAndLog("NOTHING EXPIRATION " + exp_date.strftime('%Y-%m-%d'))
         continue
 
-    # (kept as-is) window used for the OCC history calls
     startDate = (exp_date - timedelta(days=31)).strftime('%Y-%m-%d')
     endDate = exp_date.strftime('%Y-%m-%d')
 
@@ -352,10 +386,7 @@ for exp_date in expirations:
 
             time.sleep(0.8)
 
-# ----------------------------
-# NEW FINAL STEP:
 # After all option rows are stored, fill underlyingLast based on quoteDate.
-# ----------------------------
 min_qd, max_qd = get_quote_date_range(engine, ticker)
 if min_qd and max_qd:
     print(f"Filling underlyingLast for {ticker}: {min_qd} -> {max_qd}")
