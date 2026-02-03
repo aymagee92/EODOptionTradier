@@ -19,7 +19,6 @@ log = logging.getLogger("EOD")
 # ----------------------------
 TICKERS = ["AAPL", "MSFT", "TSLA", "AMD"]
 
-
 TRADIER_TOKEN = os.environ["TRADIER_ACCESS_TOKEN"]
 PG_DSN = os.environ["PG_DSN"]
 
@@ -29,16 +28,10 @@ BASE_URL = "https://api.tradier.com/v1"
 HTTP_TIMEOUT = 20
 MAX_RETRIES = 5
 TICKERS_PER_BATCH = 10
-SLEEP_BETWEEN_TICKERS_SECONDS = 0.0     # set >0 if you hit rate limits
-SLEEP_BETWEEN_EXPIRATIONS_SECONDS = 0.0 # set >0 if you hit rate limits
-
-
+SLEEP_BETWEEN_TICKERS_SECONDS = 0.0      # set >0 if you hit rate limits
+SLEEP_BETWEEN_EXPIRATIONS_SECONDS = 0.0  # set >0 if you hit rate limits
 
 HEADERS = {
-
-
-
-
     "Authorization": f"Bearer {TRADIER_TOKEN}",
     "Accept": "application/json",
 }
@@ -59,20 +52,28 @@ def tradier_get(path: str, params: dict | None = None) -> dict:
             # Handle rate limiting with backoff
             if r.status_code == 429:
                 sleep_s = min(30, (2 ** attempt)) + random.random()
-                log.warning("429 rate limit on %s. sleep %.1fs (attempt %s/%s)", path, sleep_s, attempt, MAX_RETRIES)
+                log.warning(
+                    "429 rate limit on %s. sleep %.1fs (attempt %s/%s)",
+                    path, sleep_s, attempt, MAX_RETRIES
+                )
                 time.sleep(sleep_s)
                 continue
 
             if r.status_code >= 400:
-                # Log the body (truncated) so failures are actionable
-                log.error("Tradier error %s %s params=%s body=%s", r.status_code, url, params, r.text[:800])
+                log.error(
+                    "Tradier error %s %s params=%s body=%s",
+                    r.status_code, url, params, r.text[:800]
+                )
                 r.raise_for_status()
 
             return r.json()
 
         except requests.RequestException as e:
             sleep_s = min(30, (2 ** attempt)) + random.random()
-            log.warning("HTTP error on %s attempt %s/%s: %s. sleep %.1fs", path, attempt, MAX_RETRIES, e, sleep_s)
+            log.warning(
+                "HTTP error on %s attempt %s/%s: %s. sleep %.1fs",
+                path, attempt, MAX_RETRIES, e, sleep_s
+            )
             time.sleep(sleep_s)
 
     raise RuntimeError(f"Tradier GET failed after {MAX_RETRIES} retries: {url} params={params}")
@@ -90,7 +91,10 @@ def get_underlying_last(ticker: str) -> float | None:
     return None
 
 def get_expirations(ticker: str) -> list[str]:
-    j = tradier_get("/markets/options/expirations", {"symbol": ticker, "includeAllRoots": "true", "strikes": "false"})
+    j = tradier_get(
+        "/markets/options/expirations",
+        {"symbol": ticker, "includeAllRoots": "true", "strikes": "false"}
+    )
     dates = (j.get("expirations") or {}).get("date", [])
     if isinstance(dates, str):
         return [dates]
@@ -289,6 +293,7 @@ def run_eod():
 
 if __name__ == "__main__":
     run_eod()
+
 
 
 
