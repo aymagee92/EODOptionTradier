@@ -1,11 +1,15 @@
 # =========================================================
 # TROUBLESHOOT SETUP – MANUAL RUN (NO CRON)
-# Goal: create DB + table, run backend immediately,
-#       run storage snapshot once, then run SINGLE frontend
-#       on port 8000 serving:
-#         /          (options)
-#         /storage   (storage dashboard)
+# Goal: setup system + Postgres on volume + create BOTH DBs
+#       then run ONLY the frontend (no backends yet)
+#
+# Frontend (single app on :8000) will serve:
+#   /           (options)
+#   /storage    (storage dashboard)
+#   /historical (historical options)
 # =========================================================
+
+set -e
 
 # ───────────────────────────────────────────────
 # SYSTEM UPDATE
@@ -43,7 +47,6 @@ pip install requests pandas sqlalchemy psycopg2-binary flask
 lsblk
 df -h
 
-# Detect the largest non-root mountpoint (your DO volume)
 VOL_MNT="$(df -B1 --output=target,size | awk 'NR>1 && $1!="/" {print $2, $1}' | sort -nr | head -n1 | awk '{print $2}')"
 echo "Detected volume mount: ${VOL_MNT}"
 
@@ -67,10 +70,11 @@ sudo sed -i "s|^#\?listen_addresses =.*|listen_addresses = 'localhost'|" \
 sudo systemctl start postgresql
 
 # ───────────────────────────────────────────────
-# CREATE ROLE + VERIFY/CREATE DATABASE
+# CREATE ROLE + DATABASES
 # ───────────────────────────────────────────────
-DB_NAME="options_eod"
 DB_USER="options_ingest"
+DB_NAME="options_eod"
+DB_NAME_HIST="options_eod_hist"
 
 sudo -u postgres psql <<SQL
 DO \$\$
@@ -85,25 +89,33 @@ SQL
 sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME}'" | grep -q 1 \
   || sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER};"
 
+sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='${DB_NAME_HIST}'" | grep -q 1 \
+  || sudo -u postgres psql -c "CREATE DATABASE ${DB_NAME_HIST} OWNER ${DB_USER};"
+
 # ───────────────────────────────────────────────
-# FORCE TRUST AUTH (TOP OF pg_hba.conf)
+# TRUST AUTH (LOCAL ONLY)
 # ───────────────────────────────────────────────
 PG_HBA="/etc/postgresql/${PG_VER}/main/pg_hba.conf"
 
-sudo sed -i "1ilocal   ${DB_NAME}   ${DB_USER}   trust" "$PG_HBA"
-sudo sed -i "2ihost    ${DB_NAME}   ${DB_USER}   127.0.0.1/32   trust" "$PG_HBA"
-sudo sed -i "3ihost    ${DB_NAME}   ${DB_USER}   ::1/128        trust" "$PG_HBA"
+sudo sed -i "1ilocal   ${DB_NAME_HIST}   ${DB_USER}   trust" "$PG_HBA"
+sudo sed -i "2ihost    ${DB_NAME_HIST}   ${DB_USER}   127.0.0.1/32   trust" "$PG_HBA"
+sudo sed -i "3ihost    ${DB_NAME_HIST}   ${DB_USER}   ::1/128        trust" "$PG_HBA"
+
+sudo sed -i "4ilocal   ${DB_NAME}        ${DB_USER}   trust" "$PG_HBA"
+sudo sed -i "5ihost    ${DB_NAME}        ${DB_USER}   127.0.0.1/32   trust" "$PG_HBA"
+sudo sed -i "6ihost    ${DB_NAME}        ${DB_USER}   ::1/128        trust" "$PG_HBA"
 
 sudo systemctl reload postgresql
 
 # ───────────────────────────────────────────────
 # ENVIRONMENT VARIABLES
 # ───────────────────────────────────────────────
-export PG_DSN="postgresql+psycopg2://options_ingest@localhost:5432/options_eod"
+export PG_DSN="postgresql+psycopg2://${DB_USER}@localhost:5432/${DB_NAME}"
+export PG_DSN_HIST="postgresql+psycopg2://${DB_USER}@localhost:5432/${DB_NAME_HIST}"
 export TRADIER_ACCESS_TOKEN="OUOFRjuCoP5C3uSBni56tOdaUhOG"
 
 # ───────────────────────────────────────────────
-# CLONE (FRESH)
+# CLONE REPO
 # ───────────────────────────────────────────────
 cd ~/options_eod_backend
 rm -rf EODOptionTradier
@@ -111,7 +123,7 @@ git clone https://github.com/aymagee92/EODOptionTradier.git
 cd EODOptionTradier
 
 # ───────────────────────────────────────────────
-# VERIFY STATIC FILES EXIST (NEW STRUCTURE)
+# VERIFY STATIC FILES
 # ───────────────────────────────────────────────
 test -f static/options.js  || echo "MISSING: static/options.js"
 test -f static/options.css || echo "MISSING: static/options.css"
@@ -119,33 +131,25 @@ test -f static/storage.js  || echo "MISSING: static/storage.js"
 test -f static/storage.css || echo "MISSING: static/storage.css"
 
 # ───────────────────────────────────────────────
-# RUN BACKEND OPTIONS (INGEST)
+# FRONTEND ONLY (NO BACKENDS)
 # ───────────────────────────────────────────────
 source ~/options_eod_backend/.venv/bin/activate
-python backendOptions || true
-
-# ───────────────────────────────────────────────
-# RUN BACKEND STORAGE SNAPSHOT (ONCE) (DYNAMIC)
-# ───────────────────────────────────────────────
-python backendStorage snapshot || true
-
-# ───────────────────────────────────────────────
-# FRONTEND (SINGLE APP on :8000 serving / and /storage)
-# ───────────────────────────────────────────────
 pkill -f "python frontendOptions" >/dev/null 2>&1 || true
 
 nohup "$HOME/options_eod_backend/.venv/bin/python" frontendOptions \
   > "$HOME/options_eod_backend/EODOptionTradier/frontendOptions.log" 2>&1 &
 
 # ───────────────────────────────────────────────
-# OPEN PORTS IF UFW IS ENABLED
+# FIREWALL
 # ───────────────────────────────────────────────
 if command -v ufw >/dev/null 2>&1; then
   sudo ufw allow 8000/tcp || true
 fi
 
 IP="$(curl -s ifconfig.me)"
-echo "Options Frontend:  http://$IP:8000"
-echo "Storage Dashboard: http://$IP:8000/storage"
+echo "Options Frontend:    http://$IP:8000"
+echo "Storage Dashboard:   http://$IP:8000/storage"
+echo "Historical Options:  http://$IP:8000/historical"
+
 
 
