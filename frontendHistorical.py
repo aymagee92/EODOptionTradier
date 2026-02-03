@@ -189,11 +189,26 @@ def get_latest_disk_status():
 # -------------------------
 HEADER_HTML = """
 <div class="header">
-  <div class="topnav">
-    <a class="tab" href="/">Option Info</a>
-    <a class="tab active" href="/historical">Historical Options</a>
-    <a class="tab" href="{{ url_for('storage_dashboard') }}">Storage Graph</a>
-    <a class="tab" href="/stockdata">Stock Data</a>
+  <div class="title">
+    <h1>Historical Options Data</h1>
+    <div class="topnav">
+      <a class="tab {% if active_page=='options' %}active{% endif %}"
+         href="{{ url_for('index') }}">
+        Option Info
+      </a>
+      <a class="tab {% if active_page=='historical' %}active{% endif %}"
+         href="{{ url_for('historical') }}">
+        Historical Options
+      </a>
+      <a class="tab {% if active_page=='storage' %}active{% endif %}"
+         href="{{ url_for('storage_dashboard') }}">
+        Storage Graph
+      </a>
+      <a class="tab {% if active_page=='stockdata' %}active{% endif %}"
+         href="{{ url_for('stockdata') }}">
+        Stock Data
+      </a>
+    </div>
   </div>
 
   <div class="storage">
@@ -210,6 +225,7 @@ HEADER_HTML = """
   </div>
 </div>
 """
+
 
 # -------------------------
 # PAGE TEMPLATE
