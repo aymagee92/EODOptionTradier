@@ -5,13 +5,13 @@ import csv
 import io
 from decimal import Decimal
 
-# NEW: storage dashboard routes (same pattern as your other app)
+# storage dashboard routes
 from frontendStorage import register_storage_routes
 
 app = Flask(__name__, static_folder="static")
 engine = create_engine(os.environ["PG_DSN_HIST"], pool_pre_ping=True)
 
-# NEW: register /storage route
+# register /storage route
 register_storage_routes(app, engine)
 
 TABLE = "option_history_eod"
@@ -51,64 +51,61 @@ def fmt(v):
 
 
 # -------------------------
-# NEW: disk status helpers
+# Disk status (droplet-wide, OS-level)
 # -------------------------
-def _empty_disk():
+import subprocess
+
+def _df_usage(mount: str):
+    """
+    Returns (used, total, pct) strings for a mount point using `df -h`.
+    Example: ('18G', '48G', '39%')
+    """
+    try:
+        out = subprocess.check_output(["df", "-h", mount], text=True).strip().splitlines()
+        if len(out) < 2:
+            return (None, None, None)
+        parts = out[1].split()
+        # Filesystem Size Used Avail Use% Mounted on
+        total = parts[1]
+        used = parts[2]
+        pct = parts[4]
+        return (used, total, pct)
+    except Exception:
+        return (None, None, None)
+
+def get_latest_disk_status():
+    # Root filesystem is always "/"
+    root_used, root_total, root_pct = _df_usage("/")
+
+    # Try common DigitalOcean volume mount points (first one that exists/works wins)
+    vol_used = vol_total = vol_pct = None
+    for mount in ("/mnt/volume", "/volume", "/mnt", "/data"):
+        u, t, p = _df_usage(mount)
+        if u and t and p:
+            vol_used, vol_total, vol_pct = u, t, p
+            break
+
     return {
-        "root_used": None,
-        "root_total": None,
-        "root_pct": None,
-        "vol_used": None,
-        "vol_total": None,
-        "vol_pct": None,
+        "root_used": root_used,
+        "root_total": root_total,
+        "root_pct": root_pct,
+        "vol_used": vol_used,
+        "vol_total": vol_total,
+        "vol_pct": vol_pct,
     }
 
 
-def _bytes_to_gb(x: int) -> float:
-    return float(x) / (1024.0 ** 3)
-
-
-def get_latest_disk_status():
-    sql = """
-    SELECT
-      root_used_bytes,
-      root_total_bytes,
-      vol_used_bytes,
-      vol_total_bytes
-    FROM disk_usage_daily
-    ORDER BY captured_at DESC
-    LIMIT 1
-    """
-    try:
-        with engine.connect() as conn:
-            row = conn.execute(text(sql)).fetchone()
-            if not row:
-                return _empty_disk()
-
-            ru, rt, vu, vt = map(int, row)
-
-            return {
-                "root_used": f"{_bytes_to_gb(ru):.2f} GB",
-                "root_total": f"{_bytes_to_gb(rt):.2f} GB",
-                "root_pct": f"{(ru / rt * 100):.2f}%" if rt else None,
-                "vol_used": f"{_bytes_to_gb(vu):.2f} GB",
-                "vol_total": f"{_bytes_to_gb(vt):.2f} GB",
-                "vol_pct": f"{(vu / vt * 100):.2f}%" if vt else None,
-            }
-    except Exception:
-        return _empty_disk()
-
-
 # -------------------------
-# NEW: header with nav + pills
+# Header with nav + pills
 # -------------------------
 HEADER_HTML = """
 <div class="header">
-  <div class="title">
-    <h1>Historical Option Prices</h1>
     <div class="topnav">
       <a class="tab {% if active_page=='options' %}active{% endif %}" href="/">
         Option Info
+      </a>
+      <a class="tab {% if active_page=='historical' %}active{% endif %}" href="/historical">
+        Historical Options
       </a>
       <a class="tab {% if active_page=='storage' %}active{% endif %}" href="{{ url_for('storage_dashboard') }}">
         Storage Graph
@@ -289,16 +286,17 @@ def index():
 
     return render_template_string(
         TABLE_PAGE,
-        active_page="options",  # set whichever tab should be highlighted
+        active_page="historical",
         rows=rows,
         columns=COLUMNS,
         filters=filters,
         sorts=sorts,
         limit=limit,
         fmt=fmt,
-        disk=get_latest_disk_status(),  # NEW
+        disk=get_latest_disk_status(),
     )
 
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8001)
+
