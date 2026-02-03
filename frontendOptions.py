@@ -4,6 +4,7 @@ import os
 import csv
 import io
 from decimal import Decimal
+import subprocess
 
 from frontendStorage import register_storage_routes
 from frontendHistorical import register_historical_routes
@@ -11,7 +12,9 @@ from frontendHistorical import register_historical_routes
 app = Flask(__name__, static_folder="static")
 engine = create_engine(os.environ["PG_DSN"], pool_pre_ping=True)
 
-# Register shared routes (same app, same port)
+# IMPORTANT:
+# - storage routes must be registered only ONCE on the shared app
+# - historical routes should NOT re-register /storage
 register_storage_routes(app, engine)
 register_historical_routes(app)
 
@@ -50,15 +53,17 @@ def fmt(v):
 # -------------------------
 # Disk status (droplet-wide, OS-level)
 # -------------------------
-import subprocess
-
 def _df_usage(mount: str):
     try:
         out = subprocess.check_output(["df", "-h", mount], text=True).strip().splitlines()
         if len(out) < 2:
             return (None, None, None)
         parts = out[1].split()
-        return (parts[2], parts[1], parts[4])
+        # Filesystem Size Used Avail Use% Mounted on
+        used = parts[2]
+        total = parts[1]
+        pct = parts[4]
+        return (used, total, pct)
     except Exception:
         return (None, None, None)
 
@@ -271,6 +276,5 @@ def index():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8000)
-
 
 
