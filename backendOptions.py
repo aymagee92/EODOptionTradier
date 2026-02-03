@@ -3,7 +3,8 @@ import time
 import logging
 import random
 import requests
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import create_engine, text
 from psycopg2.extras import execute_values
@@ -49,7 +50,6 @@ def tradier_get(path: str, params: dict | None = None) -> dict:
         try:
             r = session.get(url, params=params, timeout=HTTP_TIMEOUT)
 
-            # Handle rate limiting with backoff
             if r.status_code == 429:
                 sleep_s = min(30, (2 ** attempt)) + random.random()
                 log.warning(
@@ -113,11 +113,39 @@ def get_chain(ticker: str, expiration: str) -> list[dict]:
 def get_engine():
     return create_engine(PG_DSN, pool_pre_ping=True)
 
+def _get_primary_key_cols(conn, table_name: str) -> list[str]:
+    sql = """
+    SELECT kcu.column_name
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu
+      ON tc.constraint_name = kcu.constraint_name
+     AND tc.table_schema = kcu.table_schema
+    WHERE tc.constraint_type = 'PRIMARY KEY'
+      AND tc.table_name = :t
+      AND tc.table_schema = 'public'
+    ORDER BY kcu.ordinal_position;
+    """
+    return [r[0] for r in conn.execute(text(sql), {"t": table_name}).fetchall()]
+
+def _get_pk_constraint_name(conn, table_name: str) -> str | None:
+    sql = """
+    SELECT tc.constraint_name
+    FROM information_schema.table_constraints tc
+    WHERE tc.constraint_type = 'PRIMARY KEY'
+      AND tc.table_name = :t
+      AND tc.table_schema = 'public'
+    LIMIT 1;
+    """
+    r = conn.execute(text(sql), {"t": table_name}).fetchone()
+    return r[0] if r else None
+
 def ensure_schema(engine):
+    # Create table with new schema (including runTime) if it doesn't exist
     ddl = """
     CREATE TABLE IF NOT EXISTS option_chain_eod (
         symbol           TEXT NOT NULL,
         quoteDate        DATE NOT NULL,
+        runTime          TIME NOT NULL,
         underlyingLast   NUMERIC,
         expireDate       DATE NOT NULL,
         strike           NUMERIC NOT NULL,
@@ -138,11 +166,27 @@ def ensure_schema(engine):
         itmPercPuts      NUMERIC,
         dte              INTEGER,
 
-        PRIMARY KEY (quoteDate, symbol, expireDate, strike)
+        PRIMARY KEY (quoteDate, runTime, symbol, expireDate, strike)
     );
     """
     with engine.begin() as conn:
         conn.execute(text(ddl))
+
+        # If the table existed before (without runTime), migrate it safely
+        conn.execute(text("ALTER TABLE option_chain_eod ADD COLUMN IF NOT EXISTS runTime TIME;"))
+
+        # Backfill any NULL runTime for legacy rows so we can enforce NOT NULL
+        conn.execute(text("UPDATE option_chain_eod SET runTime = COALESCE(runTime, TIME '00:00:00') WHERE runTime IS NULL;"))
+        conn.execute(text("ALTER TABLE option_chain_eod ALTER COLUMN runTime SET NOT NULL;"))
+
+        wanted_pk = ["quotedate", "runtime", "symbol", "expiredate", "strike"]
+        pk_cols = [c.lower() for c in _get_primary_key_cols(conn, "option_chain_eod")]
+
+        if pk_cols and pk_cols != wanted_pk:
+            pk_name = _get_pk_constraint_name(conn, "option_chain_eod")
+            if pk_name:
+                conn.execute(text(f'ALTER TABLE option_chain_eod DROP CONSTRAINT "{pk_name}";'))
+            conn.execute(text("ALTER TABLE option_chain_eod ADD PRIMARY KEY (quoteDate, runTime, symbol, expireDate, strike);"))
 
 def upsert_rows(engine, rows: list[dict]):
     if not rows:
@@ -151,7 +195,7 @@ def upsert_rows(engine, rows: list[dict]):
     cols = list(rows[0].keys())
     tuples = [tuple(r.get(c) for c in cols) for r in rows]
 
-    conflict_cols = ("quoteDate", "symbol", "expireDate", "strike")
+    conflict_cols = ("quoteDate", "runTime", "symbol", "expireDate", "strike")
     update_cols = [c for c in cols if c not in conflict_cols]
 
     sql = f"""
@@ -173,6 +217,10 @@ def chunked(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
 
+def current_runtime_hhmmss() -> str:
+    # Store the actual time the job ran (ET), since you're scheduling at 09:30 and 16:00
+    return datetime.now(ZoneInfo("America/New_York")).strftime("%H:%M:%S")
+
 # ----------------------------
 # MAIN
 # ----------------------------
@@ -181,18 +229,17 @@ def run_eod():
     ensure_schema(engine)
 
     run_date = date.today()
-    log.info("EOD RUN START | %s tickers | run_date=%s", len(TICKERS), run_date.isoformat())
+    run_time = current_runtime_hhmmss()
+    log.info("RUN START | %s tickers | run_date=%s run_time=%s", len(TICKERS), run_date.isoformat(), run_time)
 
     for tickers_batch in chunked(TICKERS, TICKERS_PER_BATCH):
         for ticker in tickers_batch:
             t0 = time.time()
             try:
-                # 1) Underlying last via quotes (fast, 1 call per ticker)
                 underlying_last = get_underlying_last(ticker)
                 if underlying_last is None:
                     log.warning("%s: underlying last is None (quotes). Continuing.", ticker)
 
-                # 2) Expirations
                 expirations = get_expirations(ticker)
                 if not expirations:
                     log.warning("%s: no expirations", ticker)
@@ -200,7 +247,6 @@ def run_eod():
 
                 total_rows = 0
 
-                # 3) Chains per expiration (this is the heavy part)
                 for exp in expirations:
                     chain = get_chain(ticker, exp)
                     if not chain:
@@ -209,7 +255,6 @@ def run_eod():
                     exp_date = date.fromisoformat(exp)
                     dte = (exp_date - run_date).days
 
-                    # Normalize strike to int(x1000) for correct matching & speed
                     calls = {}
                     puts = {}
 
@@ -253,6 +298,7 @@ def run_eod():
                         rows.append({
                             "symbol": ticker,
                             "quoteDate": run_date,
+                            "runTime": run_time,
                             "underlyingLast": underlying_last,
                             "expireDate": exp_date,
                             "strike": strike,
@@ -289,7 +335,7 @@ def run_eod():
             if SLEEP_BETWEEN_TICKERS_SECONDS > 0:
                 time.sleep(SLEEP_BETWEEN_TICKERS_SECONDS)
 
-    log.info("EOD RUN COMPLETE")
+    log.info("RUN COMPLETE | run_date=%s run_time=%s", run_date.isoformat(), run_time)
 
 if __name__ == "__main__":
     run_eod()
