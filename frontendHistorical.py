@@ -129,7 +129,14 @@ def _df_detect_volume_mount() -> str | None:
         if len(parts) < 6:
             continue
 
-        fs, total_b, used_b, avail_b, usepct, mnt = parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
+        fs, total_b, used_b, avail_b, usepct, mnt = (
+            parts[0],
+            parts[1],
+            parts[2],
+            parts[3],
+            parts[4],
+            parts[5],
+        )
 
         if fs.startswith(("tmpfs", "udev")):
             continue
@@ -192,16 +199,13 @@ HEADER_HTML = """
   <div class="title">
     <h1>Historical Options Data</h1>
     <div class="topnav">
-      <a class="tab {% if active_page=='options' %}active{% endif %}"
-         href="{{ url_for('index') }}">
+      <a class="tab {% if active_page=='options' %}active{% endif %}" href="{{ url_for('index') }}">
         Option Info
       </a>
-      <a class="tab {% if active_page=='historical' %}active{% endif %}"
-         href="{{ url_for('historical') }}">
+      <a class="tab {% if active_page=='historical' %}active{% endif %}" href="/historical">
         Historical Options
       </a>
-      <a class="tab {% if active_page=='storage' %}active{% endif %}"
-         href="{{ url_for('storage_dashboard') }}">
+      <a class="tab {% if active_page=='storage' %}active{% endif %}" href="{{ url_for('storage_dashboard') }}">
         Storage Graph
       </a>
       <a class="tab {% if active_page=='stockdata' %}active{% endif %}" href="/stockdata">
@@ -226,7 +230,7 @@ HEADER_HTML = """
 """
 
 # -------------------------
-# PAGE TEMPLATE (UPDATED: filters + sorts + chips + clear buttons)
+# PAGE TEMPLATE (filters + sorts + chips + clear buttons)
 # -------------------------
 TABLE_PAGE = """
 <!doctype html>
@@ -406,6 +410,7 @@ def register_historical_routes(app):
             if _is_missing_table_error(e):
                 return render_template_string(
                     EMPTY_TABLE_PAGE,
+                    active_page="historical",
                     limit=limit,
                     disk=get_latest_disk_status(),
                 )
@@ -424,7 +429,7 @@ def register_historical_routes(app):
 
         return render_template_string(
             TABLE_PAGE,
-            active_page = "historical",
+            active_page="historical",
             rows=rows,
             columns=COLUMNS,
             filters=filters,
@@ -433,3 +438,4 @@ def register_historical_routes(app):
             fmt=fmt,
             disk=get_latest_disk_status(),
         )
+
