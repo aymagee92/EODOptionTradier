@@ -6,8 +6,8 @@ import logging
 from sqlalchemy import create_engine, text
 from psycopg2.extras import execute_values
 
-ACCESS_TOKEN = 'OUOFRjuCoP5C3uSBni56tOdaUhOG'
-INTERVAL = "daily"
+ACCESS_TOKEN = os.environ.get("ACCESS_TOKEN", "OUOFRjuCoP5C3uSBni56tOdaUhOG")
+INTERVAL = os.environ.get("INTERVAL", "daily")
 LOG_FILE_ADDRESS = os.path.join(os.getcwd(), 'tradier_log.txt')
 PG_DSN_HIST = os.environ["PG_DSN_HIST"]
 
