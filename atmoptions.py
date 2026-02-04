@@ -1,58 +1,51 @@
-from flask import Flask, render_template_string
-
-app = Flask(__name__)
+# atmoptions.py
+from flask import request, render_template_string
 
 def register_atmoptions_route(app):
-    @app.route("/atmoptions")
-    def atmoptions():
-        return render_template_string("""
-    <!doctype html>
-    <html>
-    <head>
-      <title>ATM Option Strategy</title>
-      <link rel="stylesheet" href="/static/options.css">
-    </head>
-    
-    <body>
-    
-      <div class="header">
-        <div class="title">
-          <h1>Option Price Data</h1>
-          <div class="topnav">
-            <a class="tab" href="/">Option Info</a>
-            <a class="tab" href="/historical">Historical Options</a>
-            <a class="tab" href="/storage">Storage Graph</a>
-            <a class="tab" href="/stockdata">Stock Data</a>
-            <a class="tab active" href="/atmoption">ATM Option</a>
-          </div>
-        </div>
-      </div>
-    
-      <div class="content">
-        <h2>ATM Option Strategy</h2>
-    
-        <table>
-          <thead>
-            <tr>
-              <th>quotedate</th>
-              <th>underlyinglast</th>
-              <th>expiredate</th>
-              <th>dte</th>
-              <th>direction</th>
-              <th>strike</th>
-              <th>open</th>
-              <th>close</th>
-              <th>diff</th>
-              <th>perc</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    
-    </body>
-    </html>
-    """)
-    
-    if __name__ == "__main__":
-        app.run(debug=True)
+    # shared layout + helpers (HTML lives in frontendOptions.py)
+    from frontendOptions import TABLE_PAGE, fmt, get_latest_disk_status
+
+    ATM_COLUMNS = [
+        "quotedate",
+        "underlyinglast",
+        "expiredate",
+        "dte",
+        "direction",
+        "strike",
+        "open",
+        "close",
+        "diff",
+        "perc",
+    ]
+
+    @app.route("/atmoption", methods=["GET"])
+    def atmoption():
+        filters = {}
+        sorts = {}
+
+        # same filter/sort URL behavior as other pages
+        for col in ATM_COLUMNS:
+            fval = request.args.get(f"f_{col}")
+            sval = request.args.get(f"s_{col}")
+
+            if fval:
+                filters[col] = fval
+            if sval in ("asc", "desc"):
+                sorts[col] = sval
+
+        limit = int(request.args.get("limit", 100))
+
+        # UI-only for now — no backend data yet
+        rows = []
+
+        return render_template_string(
+            TABLE_PAGE,
+            active_page="atmoption",
+            rows=rows,
+            columns=ATM_COLUMNS,
+            filters=filters,
+            sorts=sorts,
+            limit=limit,
+            fmt=fmt,
+            disk=get_latest_disk_status(),
+        )
