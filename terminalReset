@@ -1,0 +1,47 @@
+# =========================================================
+# RESET (Option A) — frontend-only restart with fresh code
+# Keeps Postgres + databases as-is
+# =========================================================
+
+set -euo pipefail
+
+echo "== 1) Kill any running frontend process =="
+pkill -f "python.*frontendOptions.py" 2>/dev/null || true
+pkill -f "frontendOptions.py" 2>/dev/null || true
+
+echo "== 2) Free up port 8000 if anything else is holding it =="
+# If something is still listening on 8000, kill the PID(s)
+if sudo lsof -ti :8000 >/dev/null 2>&1; then
+  sudo lsof -ti :8000 | xargs -r sudo kill -9
+fi
+
+echo "== 3) Remove old repo copy =="
+rm -rf ~/options_eod_backend/EODOptionTradier
+
+echo "== 4) Re-clone latest code =="
+cd ~/options_eod_backend
+git clone https://github.com/aymagee92/EODOptionTradier.git
+cd EODOptionTradier
+
+echo "== 5) Activate venv (reusing existing venv) =="
+source ~/options_eod_backend/.venv/bin/activate
+
+echo "== 6) (Optional) Update python deps if requirements.txt exists =="
+if [ -f requirements.txt ]; then
+  pip install -r requirements.txt
+fi
+
+echo "== 7) Start frontend in background + log to file =="
+nohup "$HOME/options_eod_backend/.venv/bin/python" frontendOptions.py \
+  > "$HOME/options_eod_backend/EODOptionTradier/frontendOptions.log" 2>&1 &
+
+echo "== 8) Show status =="
+sleep 1
+ps aux | grep -E "frontendOptions\.py" | grep -v grep || true
+tail -n 30 "$HOME/options_eod_backend/EODOptionTradier/frontendOptions.log" || true
+
+echo "== 9) Print access URLs =="
+IP="$(curl -s ifconfig.me || true)"
+echo "Options Frontend:    http://${IP}:8000"
+echo "Storage Dashboard:   http://${IP}:8000/storage"
+echo "Historical Options:  http://${IP}:8000/historical"
