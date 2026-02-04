@@ -2,7 +2,7 @@ from flask import Flask, render_template_string
 
 app = Flask(__name__)
 
-@app.route("/atmoption")
+@app.route("/atmoptions")
 def atmoption():
     return render_template_string("""
 <!doctype html>
