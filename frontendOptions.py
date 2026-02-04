@@ -12,6 +12,7 @@ from pathlib import Path
 
 from frontendStorage import register_storage_routes
 from frontendHistorical import register_historical_routes
+from atmoptions import register_atmoptions_route
 
 app = Flask(__name__, static_folder="static")
 engine = create_engine(os.environ["PG_DSN"], pool_pre_ping=True)
@@ -21,6 +22,7 @@ engine = create_engine(os.environ["PG_DSN"], pool_pre_ping=True)
 # - historical routes should NOT re-register /storage
 register_storage_routes(app, engine)
 register_historical_routes(app)
+register_atmoptions_route(app)
 
 TABLE = "option_chain_eod"
 
