@@ -2,6 +2,7 @@ from flask import render_template_string, url_for
 from sqlalchemy import text, create_engine
 from sqlalchemy.exc import ProgrammingError
 import os
+from pathlib import Path
 
 HEADER_HTML = Path("static/header.html").read_text()
 
