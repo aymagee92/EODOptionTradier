@@ -1,0 +1,27 @@
+<div class="header">
+  <div class="title">
+    <h1>Option Price Data</h1>
+    <div class="topnav">
+      <a class="tab {% if active_page=='options' %}active{% endif %}" href="{{ url_for('index') }}">
+        Option Info
+      </a>
+      <a class="tab {% if active_page=='historical' %}active{% endif %}" href="/historical">
+        Historical Options
+      </a>
+      <a class="tab {% if active_page=='storage' %}active{% endif %}" href="{{ url_for('storage_dashboard') }}">
+        Storage Graph
+      </a>
+      <a class="tab {% if active_page=='stockdata' %}active{% endif %}" href="/stockdata">
+        Stock Data
+      </a>
+      <a class="tab {% if active_page=='atmoption' %}active{% endif %}" href="/atmoption">
+        ATM Option
+      </a>
+    </div>
+  </div>
+
+  <div class="storage">
+    <span class="pill"><b>Root</b> <code>{{ disk.root_used or "—" }}</code> / <code>{{ disk.root_total or "—" }}</code> ({{ disk.root_pct or "—" }})</span>
+    <span class="pill"><b>Volume</b> <code>{{ disk.vol_used or "—" }}</code> / <code>{{ disk.vol_total or "—" }}</code> ({{ disk.vol_pct or "—" }})</span>
+  </div>
+</div>
