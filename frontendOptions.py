@@ -8,6 +8,7 @@ from decimal import Decimal
 import subprocess
 import json
 import shutil
+from pathlib import Path
 
 from frontendStorage import register_storage_routes
 from frontendHistorical import register_historical_routes
@@ -205,32 +206,7 @@ def get_latest_disk_status():
         "vol_pct": vol_pct,
     }
 
-HEADER_HTML = """
-<div class="header">
-  <div class="title">
-    <h1>Option Price Data</h1>
-    <div class="topnav">
-      <a class="tab {% if active_page=='options' %}active{% endif %}" href="{{ url_for('index') }}">
-        Option Info
-      </a>
-      <a class="tab {% if active_page=='historical' %}active{% endif %}" href="/historical">
-        Historical Options
-      </a>
-      <a class="tab {% if active_page=='storage' %}active{% endif %}" href="{{ url_for('storage_dashboard') }}">
-        Storage Graph
-      </a>
-      <a class="tab {% if active_page=='stockdata' %}active{% endif %}" href="/stockdata">
-        Stock Data
-      </a>
-    </div>
-  </div>
-
-  <div class="storage">
-    <span class="pill"><b>Root</b> <code>{{ disk.root_used or "—" }}</code> / <code>{{ disk.root_total or "—" }}</code> ({{ disk.root_pct or "—" }})</span>
-    <span class="pill"><b>Volume</b> <code>{{ disk.vol_used or "—" }}</code> / <code>{{ disk.vol_total or "—" }}</code> ({{ disk.vol_pct or "—" }})</span>
-  </div>
-</div>
-"""
+HEADER_HTML = Path("static/header.html").read_text()
 
 TABLE_PAGE = """
 <!doctype html>
