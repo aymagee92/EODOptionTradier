@@ -224,6 +224,40 @@ def historyDaysToRows(underlying_symbol, exp_date, strike, call_put, history_obj
 
     return rows
 
+def expirationLooksValid(symbol, exp_date):
+    print("checking expiration date:", exp_date.strftime('%Y-%m-%d'))
+    stockPriceOnExpDate = getStockCloseOnDate(symbol, exp_date)
+    if stockPriceOnExpDate is None:
+        print("no stock price found for date, skipping expiration")
+        return False
+
+    print("stock price on expiration date:", stockPriceOnExpDate)
+    atm = int(round(stockPriceOnExpDate))
+
+    strikes_tested = []
+    total = 21
+    i = 0
+    startDate = (exp_date - timedelta(days=31)).strftime('%Y-%m-%d')
+    endDate = exp_date.strftime('%Y-%m-%d')
+
+    for strike in range(atm - 10, atm + 11):
+        i += 1
+        strikes_tested.append(strike)
+        print(f"{i}/{total} testing strike {strike}", end="\r", flush=True)
+
+        occ = buildOCC(symbol, exp_date, 'C', strike)
+        result = connectToTradierHistory(occ, startDate, endDate)
+        if result:
+            print(" " * 60, end="\r")
+            print("expiration accepted, tested strikes:", strikes_tested)
+            return True
+
+        time.sleep(0.25)
+
+    print(" " * 60, end="\r")
+    print("expiration rejected, tested strikes:", strikes_tested)
+    return False
+
 # ----------------------------
 # NEW: reject duplicate tickers
 # ----------------------------
