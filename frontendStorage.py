@@ -3,35 +3,7 @@ from sqlalchemy import text, create_engine
 from sqlalchemy.exc import ProgrammingError
 import os
 
-HEADER_HTML = r"""
-<div class="header">
-  <div class="title">
-    <h1>Storage Usage Over Time</h1>
-    <div class="topnav">
-      <a class="tab {% if active_page=='options' %}active{% endif %}" href="{{ url_for('index') }}">
-        Option Info
-      </a>
-      <a class="tab {% if active_page=='historical' %}active{% endif %}" href="/historical">
-        Historical Options
-      </a>
-      <a class="tab {% if active_page=='storage' %}active{% endif %}" href="{{ url_for('storage_dashboard') }}">
-        Storage Graph
-      </a>
-      <a class="tab {% if active_page=='stockdata' %}active{% endif %}" href="/stockdata">
-        Stock Data
-      </a>
-    </div>
-    <div class="sub">
-      Tracks daily disk usage snapshots (root + volume) from
-      <code>disk_usage_daily</code>.
-    </div>
-  </div>
-
-  <div class="pill">
-    Latest snapshot: <code>{{ latest_date or "—" }}</code>
-  </div>
-</div>
-"""
+HEADER_HTML = Path("static/header.html").read_text()
 
 STORAGE_PAGE = r"""
 <!doctype html>
