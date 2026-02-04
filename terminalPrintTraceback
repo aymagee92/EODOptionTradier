@@ -1,0 +1,6 @@
+pkill -f "frontendOptions.py" || true
+pkill -f "python.*frontendOptions.py" || true
+sudo ss -ltnp | grep ':8000' || echo "nothing on 8000"
+cd ~/options_eod_backend/EODOptionTradier
+source ~/options_eod_backend/.venv/bin/activate
+python frontendOptions.py
