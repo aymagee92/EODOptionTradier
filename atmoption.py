@@ -3,7 +3,7 @@ from flask import Flask, render_template_string
 app = Flask(__name__)
 
 @app.route("/atmoptions")
-def atmoption():
+def atmoptions():
     return render_template_string("""
 <!doctype html>
 <html>
